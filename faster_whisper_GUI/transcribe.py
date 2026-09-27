@@ -474,13 +474,12 @@ def writeJson(fileName:str, segments:List[segment_Transcribe], language:str,avFi
                 "format": "SubRip",
                 "templates": {
                                 "default": "__CONTENT__",
-                                # 用原始字符串：原文里的 "\/" 是无效转义序列，
-                                # Python 会保留反斜杠并抛 SyntaxWarning，
-                                # 将来版本会直接报错。r"" 保持运行时的值完全不变。
-                                # 注意：json.dump 会把这个反斜杠再转义一次，
-                                # 写出的文件里是 "<\\/i>"。若本意是 HTML 的 </i>，
-                                # 应去掉反斜杠 —— 那属于输出格式变更，另行确认。
-                                "italic": r"<i>__CONTENT__<\/i>"
+                                # 这里原本写作 "<i>__CONTENT__<\/i>"。
+                                # \/ 在 Python 里是无效转义序列（反斜杠被保留），
+                                # json.dump 又把它转义一次，于是写出的字幕文件里是
+                                # "<\\/i>"，解析回来是 <\/i> —— 不是合法 HTML。
+                                # 已去掉反斜杠，输出 <i>__CONTENT__</i>。
+                                "italic": "<i>__CONTENT__</i>"
                             },
                 "styles": {
                             "default": "font-style: 10px; line-height: 1; color: #FFF;"
