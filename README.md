@@ -12,6 +12,18 @@
     - AMD HIP SDK (default `C:\Program Files\AMD\ROCm\<ver>`)
     - Intel oneAPI (provides `dnnl` for the ROCm CTranslate2 build)
 
+  - **Python versions**
+    - `3.12` is the default and the version this project was validated on.
+    - `3.13` works with no changes.
+    - `3.14` works, but PyAudio ships no `cp314` wheel, so the
+      [PyAudioWPatch](https://pypi.org/project/PyAudioWPatch/) fork is used
+      automatically instead (see the import fallback in
+      `faster_whisper_GUI/transcribe.py`).
+    - `3.15` is not usable yet — `ctranslate2`, `torch` and `onnxruntime` have no
+      3.15 wheels at all, and AMD's ROCm torch stops at `cp314`.
+    - To switch: `uv sync --extra rocm --python 3.14`, then re-run `setup.ps1`
+      to replace the CTranslate2 DLL.
+
   - **Install**
     ```powershell
     powershell -ExecutionPolicy Bypass -File setup.ps1

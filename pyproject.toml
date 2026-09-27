@@ -17,13 +17,10 @@ name = "faster-whisper-gui"
 version = "0.8.5"
 description = "faster-whisper 图形界面，支持 AMD ROCm / Intel oneAPI 加速"
 readme = "README.md"
-# 支持 3.12 / 3.13。上限卡在 <3.14 的原因：
-#   1. 本项目的已验证环境是 3.12.13（ROCm 全链路实测通过）
-#   2. 3.14 在 Windows 上解析不出 AMD torch 的完整组合 —— TheRock nightly 的
-#      保留窗口内，cp314-win 的 torch 与其所需的 rocm-sdk-* 版本对不上
-#   3. 3.15 更不行：ctranslate2 / torch / onnxruntime 都还没有 3.15 wheel
-#      （连预发布版都没有），TheRock 最高只到 cp314
-requires-python = ">=3.12,<3.14"
+# 支持 3.12 / 3.13 / 3.14。
+# 上限卡在 <3.15 的原因：ctranslate2 / torch / onnxruntime 都还没有 3.15 wheel
+# （连预发布版都没有），且 AMD TheRock 的 ROCm torch 最高只到 cp314。
+requires-python = ">=3.12,<3.15"
 
 dependencies = [
     # ---------- 图形界面 ----------
@@ -58,7 +55,13 @@ dependencies = [
     # ---------- 音频 IO / 文本处理 ----------
     "numpy",
     "pandas",
-    "PyAudio",
+    # 麦克风录音的 PortAudio 绑定。
+    # 官方 PyAudio 0.2.14 的 wheel 最高只到 cp313；Python 3.14 上既没有 wheel，
+    # 源码构建又需要 PortAudio 头文件（实测 fatal error C1083: portaudio.h）。
+    # PyAudioWPatch 是它的维护分支，API 一致且提供 cp314 wheel。
+    # 代码侧的回退导入见 faster_whisper_GUI/transcribe.py。
+    "PyAudio; python_version < '3.14'",
+    "PyAudioWPatch; python_version >= '3.14'",
     "soundfile",
     "tqdm",
     "nltk",

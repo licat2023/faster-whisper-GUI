@@ -20,7 +20,15 @@ import webvtt
 from PySide6.QtCore import (QThread, Signal, QDateTime)
 
 from faster_whisper_GUI.workers import GuardedWorker
-from pyaudio import (PyAudio, paInt16, paInt24)
+# 麦克风录音用的 PortAudio 绑定。
+# 官方 PyAudio 最新版 0.2.14 的 wheel 最高只到 cp313，Python 3.14 上没有 wheel，
+# 从源码构建又需要 PortAudio 头文件（fatal error C1083: portaudio.h）。
+# PyAudioWPatch 是它的维护分支，API 完全一致（PyAudio / paInt16 / paInt24 …）
+# 且提供 cp314 wheel。依赖声明里用 python_version 标记二选一（见 pyproject.toml）。
+try:
+    from pyaudio import (PyAudio, paInt16, paInt24)
+except ImportError:  # Python 3.14+：退回 PyAudioWPatch
+    from pyaudiowpatch import (PyAudio, paInt16, paInt24)
 import wave
 
 from .config import (
@@ -466,7 +474,13 @@ def writeJson(fileName:str, segments:List[segment_Transcribe], language:str,avFi
                 "format": "SubRip",
                 "templates": {
                                 "default": "__CONTENT__",
-                                "italic": "<i>__CONTENT__<\/i>"
+                                # 用原始字符串：原文里的 "\/" 是无效转义序列，
+                                # Python 会保留反斜杠并抛 SyntaxWarning，
+                                # 将来版本会直接报错。r"" 保持运行时的值完全不变。
+                                # 注意：json.dump 会把这个反斜杠再转义一次，
+                                # 写出的文件里是 "<\\/i>"。若本意是 HTML 的 </i>，
+                                # 应去掉反斜杠 —— 那属于输出格式变更，另行确认。
+                                "italic": r"<i>__CONTENT__<\/i>"
                             },
                 "styles": {
                             "default": "font-style: 10px; line-height: 1; color: #FFF;"
