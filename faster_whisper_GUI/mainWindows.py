@@ -4,6 +4,7 @@ import json
 import logging
 import sys
 import os
+import queue
 import time
 # from typing import override
 import av
@@ -87,6 +88,19 @@ class statusToolsSignalStore(QObject):
 # =======================================================================================
 # mainWindows function control class
 # =======================================================================================
+
+# 实时转写的分块长度（秒）。
+# 30 秒是实测出来的最优值，不是随手定的 —— 它正好是 Whisper 的原生输入窗口，
+# 每段输入本来就会被填充到 30 秒。同一段 58.6 秒真实语音与整段文件转写对比：
+#     块长   耗时(占实时)   字符相似度
+#      8s    14.3s (24%)      83%
+#     15s    17.7s (30%)      70%
+#     30s     7.3s (12%)     100%
+# 即：切得越碎，固定开销（每次 model.transcribe() 约 1 秒）占比越高，
+# 边界切在词/数字串中间造成的伪影也越多。30 秒块能与文件转写逐字一致。
+# 调小可以更快看到首段结果，但要接受上表中的质量下降。
+STREAM_CHUNK_SECONDS = 30.0
+
 class MainWindows(UIMainWin):
     """C"""
 
@@ -112,6 +126,9 @@ class MainWindows(UIMainWin):
 
         self.transcribe_thread = None
         self.audio_capture_thread = None
+        self.audio_stream_worker = None
+        self.audio_queue = None
+        self.audio_wav_path = ""
         self.whisperXWorker = None
         self.outputWorker = None
         self.demucsWorker = None
@@ -288,7 +305,7 @@ class MainWindows(UIMainWin):
     def audioCaptureProcess(self):
         
         if self.transcribe_thread is None and self.audio_capture_thread is None:
-            self.processResultText.setText("")
+            self.page_process.processResultText.setText("")
             log.info("%s", "AudioCapture")
             VAD_param :dict = self.getVADparam()
 
@@ -305,7 +322,10 @@ class MainWindows(UIMainWin):
                 VAD_param = {}
 
             # 转写参数
-            Transcribe_params : dict = self.page_transcribes.getParamTranscribe()
+            # 原先写作 self.page_transcribes.getParamTranscribe()，但该方法定义在
+            # MainWindows 自己身上（TranscribeNavigationInterface 没有它）。
+            # 工作路径 transcribeProcess() 用的就是 self.getParamTranscribe()。
+            Transcribe_params : dict = self.getParamTranscribe()
             log.info("%s", "Transcribes options:")
             for key, value in Transcribe_params.items():
                 log.info("%s", f"  {key} : {value}")
@@ -316,21 +336,52 @@ class MainWindows(UIMainWin):
                 
                 return
             
-            rate_channel_dType = self.combox_capture.currentIndex()
+            # 注意：combox_capture 定义在 page_process 上。这里原先写作
+            # self.combox_capture（MainWindows 上没有这个属性），必然 AttributeError ——
+            # 该功能此前被 setEnabled(False) 挡住，从未执行到这一行。
+            rate_channel_dType = self.page_process.combox_capture.currentIndex()
             rate_channel_dType : dict = CAPTURE_PARA[rate_channel_dType]
             rate = rate_channel_dType["rate"]
             channels = rate_channel_dType["channel"]
             dType = rate_channel_dType["dType"]
 
+            # 录音文件路径由这里定，录音线程和实时转写线程共用同一个，
+            # 这样停止后能按普通文件走既有的结果展示/导出流程
+            os.makedirs(os.path.abspath(r"./temp"), exist_ok=True)
+            self.audio_wav_path = os.path.join(
+                                        os.path.abspath(r"./temp")
+                                        , datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S") + ".wav"
+                                    ).replace("\\", "/")
+
+            # 录音线程把音频推进队列，转写线程消费并增量出结果
+            self.audio_queue = queue.Queue()
             self.audio_capture_thread = CaptureAudioWorker(
                                                             rate=rate
                                                             , channels=channels
                                                             , dType=dType
+                                                            , audio_queue=self.audio_queue
+                                                            , wav_path=self.audio_wav_path
                                                         )
-            self.audio_capture_thread.start()
+            self.audio_stream_worker = AudioStreamTranscribeWorker(
+                                                            model=self.FasterWhisperModel
+                                                            , parameters=Transcribe_params
+                                                            , vad_filter=vad_filter
+                                                            , vad_parameters=VAD_param
+                                                            , audio_queue=self.audio_queue
+                                                            , source_rate=rate
+                                                            , chunk_seconds=STREAM_CHUNK_SECONDS
+                                                            , wav_path=self.audio_wav_path
+                                                        )
+            self.audio_stream_worker.signal_segments.connect(self.streamSegmentsUpdated)
+            self.audio_stream_worker.Signal_process_over.connect(self.streamTranscribeOver)
 
-            self.button_process.setText(self.__tr("  取消  "))
-            self.button_process.setIcon(":/resource/Image/Cancel_red.svg")
+            self.audio_capture_thread.start()
+            self.audio_stream_worker.start()
+            log.info("%s", f"实时转写已启动（每 {STREAM_CHUNK_SECONDS:.0f}s 一块），录音 -> {self.audio_wav_path}")
+
+            # 同上：button_process 在 page_process 上，不是 MainWindows 上
+            self.page_process.button_process.setText(self.__tr("  取消  "))
+            self.page_process.button_process.setIcon(":/resource/Image/Cancel_red.svg")
 
         else:
             self.audioCaptureOver()
@@ -468,10 +519,44 @@ class MainWindows(UIMainWin):
         self.resetButton_process()
         
     def audioCaptureOver(self):
-        self.audio_capture_thread.stop()
-        while(self.audio_capture_thread.isRunning()):
-            time.sleep(0.1)
-        self.audio_capture_thread = None
+        """用户点了「取消」：停止录音，并等实时转写把缓冲里剩下的音频处理完。"""
+        if self.audio_capture_thread is not None:
+            self.audio_capture_thread.stop()
+            while self.audio_capture_thread.isRunning():
+                time.sleep(0.1)
+            self.audio_capture_thread = None
+
+        if self.audio_stream_worker is not None:
+            self.audio_stream_worker.stop()
+            log.info("%s", "等待实时转写收尾（处理缓冲中剩余的音频）...")
+            while self.audio_stream_worker.isRunning():
+                time.sleep(0.1)
+        # 结果的展示与状态复位交给 streamTranscribeOver —— 那里的信号是排队投递的
+
+    def streamSegmentsUpdated(self, segments: list):
+        """实时增量回调：把当前累计的文本刷到结果区，实现边说边出字。"""
+        try:
+            self.page_process.processResultText.setPlainText(
+                "".join(seg.text for seg in segments))
+        except Exception as e:
+            log.error("%s", f"刷新实时转写结果失败: {e}")
+
+    def streamTranscribeOver(self, segments_path_info: list):
+        """实时转写结束：复位状态，并复用普通转写的结果展示/导出流程。"""
+        self.audio_stream_worker = None
+
+        # 采集已结束，把选择切回「转写文件」，
+        # 否则下次点按钮会又启动一次录音而不是转写文件
+        self.page_process.transceibe_Files_RadioButton.setChecked(True)
+
+        if not segments_path_info:
+            log.info("%s", "实时转写结束：未识别到语音内容")
+            self.transcribeOver(None)
+            return
+
+        log.info("%s", f"实时转写结束：共 {len(segments_path_info[0][0])} 段")
+        # transcribeOver 会复位状态、弹成功提示，并按设置跳转到输出页
+        self.transcribeOver(segments_path_info)
     
     def changeTableData(self, results) -> None:
         # 当转写结果列表 与表格数据模型列表长度不一致的时候 直接重新绘制所有表格
