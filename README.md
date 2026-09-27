@@ -2,6 +2,38 @@
 
     faster-whisper、whisperX，GUI with PySide6
 
+- ## Installation (uv-managed)
+
+  Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`
+  (this replaces the old `requirements.txt`, which had drifted out of date).
+
+  - **Prerequisites**
+    - [uv](https://docs.astral.sh/uv/) — `powershell -c "irm https://astral.sh/uv/install.ps1 | iex"`
+    - AMD HIP SDK (default `C:\Program Files\AMD\ROCm\<ver>`)
+    - Intel oneAPI (provides `dnnl` for the ROCm CTranslate2 build)
+
+  - **Install**
+    ```powershell
+    powershell -ExecutionPolicy Bypass -File setup.ps1
+    ```
+    This runs `uv sync --extra rocm`, drops the locally built ROCm
+    `ctranslate2.dll` into site-packages, and verifies that the GPU is visible.
+
+  - **Run**
+    ```powershell
+    .\启动GUI.bat
+    # or
+    uv run FasterWhisperGUI.py
+    ```
+
+  - **Changing dependencies** — edit `pyproject.toml`, then `uv lock`.
+    Note that `uv sync` is exact: reinstalling `ctranslate2` overwrites the
+    custom ROCm DLL, so re-run `setup.ps1` afterwards to restore it.
+
+  > The ROCm `ctranslate2.dll` is built from CTranslate2 `v4.8.2` source and must
+  > stay version-matched with the `ctranslate2` package. Do not bump
+  > `ctranslate2` without rebuilding the DLL — see `.probe/FEASIBILITY.md`.
+
 - ## model download
 
   - https://huggingface.co/models?sort=trending&search=faster-whisper

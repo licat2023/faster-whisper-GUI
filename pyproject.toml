@@ -1,0 +1,157 @@
+# ===================================================================
+#  faster-whisper-GUI — 依赖定义（uv 管理）
+#
+#  常用命令：
+#      uv sync --extra rocm          # 安装/更新环境（含 AMD ROCm 版 torch）
+#      uv run FasterWhisperGUI.py    # 用本项目环境运行
+#
+#  本文件取代了旧的 requirements.txt。旧文件里的版本（faster-whisper 0.10.0、
+#  torch 1.13.1+cu117、CTranslate2>=3.21.0）早已与真实环境不符，照它装必然失败。
+#
+#  下面的依赖清单是对全部源码做 AST 扫描、取出真实 import 后得到的，
+#  NOT 照抄旧文件。旧 setup.ps1 里手写的 joblib / numba / scipy / omegaconf /
+#  einops / matplotlib 等其实都是传递依赖，源码并未直接 import。
+# ===================================================================
+[project]
+name = "faster-whisper-gui"
+version = "0.8.5"
+description = "faster-whisper 图形界面，支持 AMD ROCm / Intel oneAPI 加速"
+readme = "README.md"
+# 支持 3.12 / 3.13。上限卡在 <3.14 的原因：
+#   1. 本项目的已验证环境是 3.12.13（ROCm 全链路实测通过）
+#   2. 3.14 在 Windows 上解析不出 AMD torch 的完整组合 —— TheRock nightly 的
+#      保留窗口内，cp314-win 的 torch 与其所需的 rocm-sdk-* 版本对不上
+#   3. 3.15 更不行：ctranslate2 / torch / onnxruntime 都还没有 3.15 wheel
+#      （连预发布版都没有），TheRock 最高只到 cp314
+requires-python = ">=3.12,<3.14"
+
+dependencies = [
+    # ---------- 图形界面 ----------
+    "PySide6>=6.10.2",
+    "PySide6-Fluent-Widgets>=1.3.2",
+    "PySideSix-Frameless-Window>=0.8.0",   # 提供 qframelesswindow
+
+    # ---------- 语音识别核心 ----------
+    # ctranslate2 必须与自建 ROCm 版 ctranslate2.dll 严格同版本：
+    # 那条 DLL 由 CTranslate2 v4.8.2 源码构建，Python 侧的 _ext.*.pyd 也来自
+    # 官方 4.8.2 wheel，两者必须配对。升级此版本前必须先重新构建 DLL。
+    "ctranslate2==4.8.2",
+    # 代码使用 VAD 参数名 threshold；0.10.0/1.0.0 用的是 onset，不兼容。
+    "faster-whisper==1.2.1",
+    "av",
+    "ffmpeg-python",
+
+    # ---------- 说话人分离 / 强制对齐 ----------
+    # torch 钉死到已验证的 nightly。AMD 的 ROCm torch 只有 nightly 预发布版，
+    # 不钉的话每次重新解析都会跳到当天的新版本（实测会跳到 …20260927），
+    # 而当前环境跑通的是 …20260926。升级 uvf 前请先重跑一次完整验证。
+    "torch==2.15.0a0+rocm10.2.0a20260926",
+    # torchaudio 钉到 PyPI 的 2.11.0（cpu 构建），与当前已验证环境一致。
+    # 它不声明对 torch 的版本约束，且实测其算子会把工作委托给 torch，
+    # 在 ROCm 张量上可正常运行（torchaudio.functional.resample 在 cuda 张量上成功）。
+    # 不钉的话，TheRock 索引上的 2.11.0.3+rocm… 会因版本更高而被选中，
+    # 那是一条未经本项目验证的路径。
+    "torchaudio==2.11.0",
+    "pyannote.audio>=4.0",
+    "transformers>=4.23",
+
+    # ---------- 音频 IO / 文本处理 ----------
+    "numpy",
+    "pandas",
+    "PyAudio",
+    "soundfile",
+    "tqdm",
+    "nltk",
+    "opencc-python-reimplemented",
+    "webvtt-py",
+]
+
+[project.optional-dependencies]
+# AMD ROCm 设备内核（GPU 算子）。
+# 本项目在 Radeon 780M（gfx1103，Ryzen 7 7840H）上验证。
+# 换用其它 AMD GPU 时，把 gfx1103 改成对应架构，例如 gfx1100 / gfx1101 / gfx1200。
+rocm = ["torch[device-gfx1103]"]
+
+[tool.uv]
+# 这是一个应用（application），不是要发布/安装的库，
+# uv 不需要构建本项目自身。
+package = false
+
+# AMD 的 ROCm torch 与 rocm-sdk-* 全是 nightly 预发布版，必须允许预发布，
+# 否则传递依赖里的 rocm==10.2.0a… 解析不出来。
+#
+# 注意 "if-necessary-or-explicit" 不够用：它只对直接依赖放行，
+# torch 传递要求的 rocm / rocm-sdk-* 仍会被拒。
+#
+# 但 "allow" 是钝器 —— 实测它会让 uv 顺带把其它包的 rc/dev 版也选进来
+# （einops 0.9.0.dev0、safetensors 0.9.0rc1、defusedxml 0.8.0rc2、
+#   hf-xet 1.7.0.dev1），偏离已验证环境。因此下面用 constraint-dependencies
+# 把这几个钉回当前环境实际在用的稳定版。
+# 注意 PEP 440 下预发布版排在正式版之前（0.9.0.dev0 < 0.9.0），
+# 所以只能精确钉版本，无法用区间排除。
+prerelease = "allow"
+
+constraint-dependencies = [
+    "einops==0.8.2",
+    "safetensors==0.8.0",
+    "defusedxml==0.7.1",
+    "hf-xet==1.6.0",
+]
+
+# TheRock 同时提供了 numpy / pillow / sympy / networkx 等的镜像副本，
+# 需要 unsafe-best-match 才能跨索引找出 AMD 那套 torch 的完整依赖组合。
+index-strategy = "unsafe-best-match"
+
+# triton 只在 Linux 上发布（TheRock 的 triton 目录里 win_amd64 wheel 数为 0），
+# 但 AMD 的 torch wheel 把 triton 声明成了无平台标记的必需依赖。
+# 本项目在 Windows 上不使用 torch.compile/inductor，运行时不需要 triton
+# —— 当前已验证的环境里就没有装它。这里把该依赖限制到 Linux，
+# 否则 uv sync 会在 Windows 上报
+# "Distribution triton==… can't be installed because it doesn't have a wheel
+#  for the current platform"。
+override-dependencies = ["triton; sys_platform == 'linux'"]
+
+# -------------------------------------------------------------------
+#  索引配置
+#
+#  PyPI 上没有 ROCm 版 torch（只有 CUDA / CPU 版），必须使用 AMD 的 nightly 源。
+#
+#  这里踩过两个坑，都记下来：
+#
+#  1) 不能给 therock 索引写 explicit = true。
+#     TheRock 上的 rocm 元包只以 sdist（.tar.gz）形式发布，没有 wheel。
+#     实测「explicit 索引 + [tool.uv.sources]」的组合解析不出它，uv 会报
+#     "there is no version of rocm[libraries]==10.2.0a2026xxxx"。
+#
+#  2) 只用默认的 first-index 策略还不够：TheRock 也镜像了 filelock / fsspec /
+#     networkx / setuptools 等通用包，first-index 会取到 PyPI 上的较旧版本
+#     （实测 filelock 会退到 3.32.6，而当前环境是 4.0.4）。因此用
+#     unsafe-best-match 跨索引择优，让结果贴合已验证环境。
+#
+#  3) 跨索引择优会让 TheRock 的 torchaudio 2.11.0.3+rocm… 胜出（PEP 440 下
+#     ==2.11.0 也匹配带本地版本号的 2.11.0+rocm…）。本项目验证的是 PyPI 的
+#     torchaudio 2.11.0，所以下面用 sources 把它单独钉回 pypi 索引。
+# -------------------------------------------------------------------
+[[tool.uv.index]]
+name = "pypi"
+url = "https://pypi.org/simple"
+default = true
+
+[[tool.uv.index]]
+name = "therock"
+url = "https://nightly.repo.amd.com/rocm/whl-next/"
+
+[tool.uv.sources]
+# AMD 的 torch 运行时依赖（rocm 元包、rocm-sdk-*、设备内核）只存在于 TheRock。
+# PyPI 上有同名占位包（rocm 0.1.0、amd-torch-device-gfx1103 0.0.1.dev0），
+# 版本号对不上，所以这些包必须逐个指名索引。
+torch = { index = "therock" }
+rocm = { index = "therock" }
+rocm-bootstrap = { index = "therock" }
+rocm-sdk-core = { index = "therock" }
+rocm-sdk-devel = { index = "therock" }
+rocm-sdk-libraries = { index = "therock" }
+rocm-sdk-device-gfx1103 = { index = "therock" }
+amd-torch-device-gfx1103 = { index = "therock" }
+# 见上面第 3 条：torchaudio 走 PyPI，不用 TheRock 的 ROCm 版
+torchaudio = { index = "pypi" }

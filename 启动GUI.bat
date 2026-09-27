@@ -5,7 +5,7 @@ REM
 REM  Prerequisites:
 REM    1. AMD HIP SDK installed (default: C:\Program Files\AMD\ROCm\<ver>)
 REM    2. Intel oneAPI installed (provides dnnl for the ROCm ctranslate2.dll)
-REM    3. Dependencies installed via .venv\setup.ps1
+REM    3. Dependencies installed via setup.ps1 (uv-managed: pyproject.toml + uv.lock)
 REM
 REM  ROCm environment variables and DLL directories are configured
 REM  automatically inside FasterWhisperGUI.py - nothing to set here.
@@ -25,7 +25,7 @@ chcp 65001 >nul
 REM Check the virtual environment
 if not exist ".venv\Scripts\python.exe" (
     echo [ERROR] .venv not found. Run this first:
-    echo         powershell -ExecutionPolicy Bypass -File .venv\setup.ps1
+    echo         powershell -ExecutionPolicy Bypass -File setup.ps1
     echo.
     pause
     exit /b 1
