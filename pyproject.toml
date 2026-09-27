@@ -56,12 +56,11 @@ dependencies = [
     "numpy",
     "pandas",
     # 麦克风录音的 PortAudio 绑定。
-    # 官方 PyAudio 0.2.14 的 wheel 最高只到 cp313；Python 3.14 上既没有 wheel，
-    # 源码构建又需要 PortAudio 头文件（实测 fatal error C1083: portaudio.h）。
-    # PyAudioWPatch 是它的维护分支，API 一致且提供 cp314 wheel。
-    # 代码侧的回退导入见 faster_whisper_GUI/transcribe.py。
-    "PyAudio; python_version < '3.14'",
-    "PyAudioWPatch; python_version >= '3.14'",
+    # 用 sounddevice 而非 PyAudio：后者发 cp3X 专用 wheel，每出一个新 Python
+    # 版本都要等维护者重建（Python 3.14 就是因此被卡住 —— 无 cp314 wheel，
+    # 源码构建又缺 PortAudio 头文件）。sounddevice 发纯 Python wheel 并把编好的
+    # PortAudio DLL 捆在包里，与 Python 版本无关；设备覆盖与 PyAudio 完全一致。
+    "sounddevice",
     "soundfile",
     "tqdm",
     "nltk",

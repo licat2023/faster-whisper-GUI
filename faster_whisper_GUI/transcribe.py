@@ -5,7 +5,6 @@ from concurrent import futures
 import logging
 import os
 from typing import List
-import time
 import codecs
 import torch
 import numpy as np 
@@ -20,15 +19,13 @@ import webvtt
 from PySide6.QtCore import (QThread, Signal, QDateTime)
 
 from faster_whisper_GUI.workers import GuardedWorker
-# 麦克风录音用的 PortAudio 绑定。
-# 官方 PyAudio 最新版 0.2.14 的 wheel 最高只到 cp313，Python 3.14 上没有 wheel，
-# 从源码构建又需要 PortAudio 头文件（fatal error C1083: portaudio.h）。
-# PyAudioWPatch 是它的维护分支，API 完全一致（PyAudio / paInt16 / paInt24 …）
-# 且提供 cp314 wheel。依赖声明里用 python_version 标记二选一（见 pyproject.toml）。
-try:
-    from pyaudio import (PyAudio, paInt16, paInt24)
-except ImportError:  # Python 3.14+：退回 PyAudioWPatch
-    from pyaudiowpatch import (PyAudio, paInt16, paInt24)
+# 麦克风录音用 sounddevice（PortAudio 绑定）。
+# 原先用 PyAudio：它只发 cp3X 专用 wheel，每出一个新 Python 版本都要等维护者
+# 重新构建 —— Python 3.14 就是因此被卡住的（无 cp314 wheel，退回源码构建又缺
+# PortAudio 头文件，报 fatal error C1083: portaudio.h）。
+# sounddevice 发的是纯 Python wheel 并把编好的 PortAudio DLL 捆在包里，
+# 与 Python 版本无关；设备覆盖与 PyAudio 一致（同一套 PortAudio）。
+import sounddevice as sd
 import wave
 
 from .config import (
@@ -77,62 +74,50 @@ class CaptureAudioWorker(GuardedWorker):
         self.rate = rate
         self.channels = channels
         self.dType = dType
-        self.pa = PyAudio()
         self.is_running = False
-        # self.timer = QTimer()
-        self.format_capture = {16:paInt16, 24:paInt24}
+        # sounddevice 的采样格式名，对应原先的 paInt16 / paInt24
+        self.format_capture = {16: "int16", 24: "int24"}
+        # 每样本字节数。实测两种库都是紧凑排布（int24 为 3 字节，不是 4 字节填充）
+        self.sample_width = {16: 2, 24: 3}
         self.buffer_size = 2048
     
     def run(self):
         self.is_running = True
-        # print("打开输入流...")
-        # print(f"format_capture : {self.format_capture[self.dType]}")
-        #if self.dType == 16:
-        stream = self.pa.open(format=self.format_capture[self.dType]
+        # 不传 device 即使用系统默认输入设备，与迁移前行为一致
+        stream = sd.RawInputStream(samplerate=self.rate
                             , channels=self.channels
-                            , rate=self.rate
-                            , input=True
-                            , frames_per_buffer=self.buffer_size
+                            , dtype=self.format_capture[self.dType]
+                            , blocksize=self.buffer_size
                         )
-        stream.start_stream()
+        stream.start()
 
         currentDateTime = QDateTime.currentDateTime().toString("yyyy-MM-dd-hh-mm-ss")
-        # print(currentDateTime)
 
         temp_path = r"./temp"
         if not os.path.exists(os.path.abspath(temp_path)):
             os.mkdir(os.path.abspath(temp_path))
-        # print(f"temp path : {temp_path}")
 
         wav_path = os.path.join(os.path.abspath(temp_path)
                                 ,f"{currentDateTime}.wav"
                             ).replace("\\", "/")
-        # print(f"file: {wav_path}")
 
-        wf = wave.open(wav_path, 'wb')  # 创建一个音频文件
-        # print(f"set channels : {2}")
-        wf.setnchannels(self.channels)  # 设置声道数为2
-        # print(f"set sampwidth : {self.dType / 8}")
-        wf.setsampwidth(int(self.dType / 8))  # 设置采样深度为
-        # print(f"set rate : {self.rate}")
-        wf.setframerate(self.rate)  # 设置采样率为 16000
-        record_buf = []
-        while self.is_running:
-            ##发射信号
-            # self.sinOut.emit(str(a))
-            # print("===========================================================")
-            # print(datetime.datetime.now())
-            audio_data = stream.read(self.buffer_size)  # 读出声卡缓冲区的音频数据
-            a = np.ndarray(buffer=audio_data, dtype={16:np.int16, 24:np.int32}[self.dType], shape=(self.buffer_size,))
-            # print(a.shape)
-            # 将数据写入创建的音频文件
-            record_buf.append(audio_data)
-            time.sleep(5)
-
-        wf.writeframes("".encode().join(record_buf))
-        wf.close()
-        stream.stop_stream()
-        stream.close()
+        wf = wave.open(wav_path, 'wb')
+        wf.setnchannels(self.channels)
+        wf.setsampwidth(self.sample_width[self.dType])
+        wf.setframerate(self.rate)
+        try:
+            # 边采边写：原实现把全部音频堆在内存里最后一次性写盘，
+            # 拿掉 time.sleep(5) 后按真实速率累积（48kHz 立体声 16bit 约 691 MB/小时）。
+            while self.is_running:
+                data, overflowed = stream.read(self.buffer_size)
+                if overflowed:
+                    log.warning("%s", "[录音] 输入缓冲溢出，音频可能有丢失")
+                wf.writeframes(bytes(data))
+        finally:
+            # 异常或取消时也要把已录到的部分落盘并释放设备
+            wf.close()
+            stream.stop()
+            stream.close()
 
     def stop(self):
         self.is_running = False

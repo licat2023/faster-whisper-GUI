@@ -13,21 +13,19 @@
     - Intel oneAPI (provides `dnnl` for the ROCm CTranslate2 build)
 
   - **Python versions**
-    - `3.13` is the default (pinned in `.python-version`). No dependency changes
-      are needed for it.
-    - `3.12` also works — it is the version this project was originally
-      validated and benchmarked on.
-    - `3.14` works, but PyAudio ships no `cp314` wheel, so the
-      [PyAudioWPatch](https://pypi.org/project/PyAudioWPatch/) fork is used
-      automatically instead (see the import fallback in
-      `faster_whisper_GUI/transcribe.py`).
+    - `3.14` is the default (pinned in `.python-version`).
+    - `3.12`, `3.13` and `3.14` all work with no dependency changes, because
+      microphone capture uses [sounddevice](https://python-sounddevice.readthedocs.io/)
+      — a pure-Python wheel that bundles the PortAudio binaries, so it is not tied
+      to any particular Python ABI. (The previous PyAudio dependency only shipped
+      `cp3X`-specific wheels and was what blocked 3.14.)
     - `3.15` is not usable yet — `ctranslate2`, `torch` and `onnxruntime` have no
       3.15 wheels at all, and AMD's ROCm torch stops at `cp314`.
     - To switch: `uv sync --extra rocm --python 3.12`, then re-run `setup.ps1`
       to replace the CTranslate2 DLL.
-    - Note: all three supported versions transcribe at the same speed (measured
-      8.14x / 7.85x / 7.98x realtime — within run-to-run noise). The version
-      choice is about interpreter currency, not performance.
+    - Note: all supported versions transcribe at the same speed (measured
+      8.14x / 7.85x / 7.98x / 8.66x realtime — within run-to-run noise). The
+      version choice is about interpreter currency, not performance.
 
   - **Install**
     ```powershell

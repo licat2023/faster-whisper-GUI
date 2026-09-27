@@ -48,7 +48,7 @@ if (-not (Test-Path "pyproject.toml") -or -not (Test-Path "uv.lock")) {
 }
 
 # ---------- 1. 同步环境 ----------
-# uv 会读取 .python-version（当前 3.13）自动准备解释器。
+# uv 会读取 .python-version（当前 3.14）自动准备解释器。
 # --extra rocm 装上 AMD 的 ROCm 版 torch 与 gfx1103 设备内核。
 Write-Host "[1/4] 用 uv 同步环境（首次约需数分钟）" -ForegroundColor Cyan
 Write-Host "      依赖来源：pyproject.toml + uv.lock"
