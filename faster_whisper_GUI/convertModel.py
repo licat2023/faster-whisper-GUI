@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import logging
 import os 
 import time
 from threading import Thread
@@ -9,6 +10,8 @@ from ctranslate2.converters import TransformersConverter as cvter
 from PySide6.QtCore import QCoreApplication
 
 from .config import Model_names
+
+log = logging.getLogger(__name__)
 
 def __tr(text:str) -> str:
     return QCoreApplication.translate("ConvertModel", text)
@@ -32,31 +35,31 @@ def ConvertModel(model_name_or_path:str,cache_dir: str, output_dir:str, quantiza
             if os.path.exists(model_path):
                 model_name_or_path = model_path
 
-            print(__tr('Use local file is True, found applicable local cache:'))
-            print(f"  {model_name_or_path}")
+            log.info("%s", __tr('Use local file is True, found applicable local cache:'))
+            log.info("%s", f"  {model_name_or_path}")
             
         else:
             if not (model_name_or_path in Model_names):
-                print(__tr('Not a valid model name:'))
-                print(f"  {model_name_or_path}")
+                log.info("%s", __tr('Not a valid model name:'))
+                log.info("%s", f"  {model_name_or_path}")
                 return
             else:
                 model_name_or_path = "openai/whisper-" + model_name_or_path
-                print(__tr('No valid local cache was found and will download:'))
-                print(f"  {model_name_or_path}")
+                log.info("%s", __tr('No valid local cache was found and will download:'))
+                log.info("%s", f"  {model_name_or_path}")
     else:
         if not (model_name_or_path in Model_names):
-            print(__tr('Not a valid model name:'))
-            print(f"  {model_name_or_path}")
+            log.info("%s", __tr('Not a valid model name:'))
+            log.info("%s", f"  {model_name_or_path}")
 
             return
         else:
             model_name_or_path = "openai/whisper-" + model_name_or_path
-            print(__tr('Download model: '))
-            print(f"  {model_name_or_path} ")
+            log.info("%s", __tr('Download model: '))
+            log.info("%s", f"  {model_name_or_path} ")
 
-    print(__tr('target model: '))
-    print(f"  {model_name_or_path}")
+    log.info("%s", __tr('target model: '))
+    log.info("%s", f"  {model_name_or_path}")
     print(__tr("Initializing"), end="")
     
     cvter_01 = {}
@@ -76,9 +79,9 @@ def ConvertModel(model_name_or_path:str,cache_dir: str, output_dir:str, quantiza
             pass
     try:
         cvter_01 = cvter_01["result"]
-        print(__tr("\nInitialization complete!"))
+        log.info("%s", __tr("\nInitialization complete!"))
     except:
-        print(__tr("\nFailed to complete initialization!"))
+        log.error("%s", __tr("\nFailed to complete initialization!"))
         return
     
     print(__tr("Convert"),end="")
@@ -93,6 +96,6 @@ def ConvertModel(model_name_or_path:str,cache_dir: str, output_dir:str, quantiza
         print(".", end="", flush=True)
         time.sleep(0.5)
 
-    print(__tr("\nOver"))
+    log.info("%s", __tr("\nOver"))
 
     

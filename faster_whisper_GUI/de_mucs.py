@@ -1,6 +1,9 @@
+import logging
 # coding:utf-8
 import os
 from PySide6.QtCore import QThread, Signal
+
+from faster_whisper_GUI.workers import GuardedWorker
 from torchaudio.pipelines import HDEMUCS_HIGH_MUSDB_PLUS
 import torch
 from torchaudio.transforms import Fade
@@ -13,8 +16,10 @@ from faster_whisper import decode_audio
 
 from .config import STEMS
 
+log = logging.getLogger(__name__)
 
-class DemucsWorker(QThread):
+
+class DemucsWorker(GuardedWorker):
 
     signal_vr_over = Signal(bool)
     file_process_status = Signal(dict)
@@ -47,7 +52,7 @@ class DemucsWorker(QThread):
         self.is_running = True
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        print(f"device: {device}")
+        log.info("%s", f"device: {device}")
 
         if not self.is_running:
             return
@@ -57,7 +62,7 @@ class DemucsWorker(QThread):
             try:
                 self.loadModel(self.model_path, device=device)
             except Exception as e:
-                print(f"load model error: \n{str(e)}")
+                log.error("%s", f"load model error: \n{str(e)}")
                 self.signal_vr_over.emit(False)
                 self.stop()
 
@@ -73,20 +78,20 @@ class DemucsWorker(QThread):
                 del audio
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                print("exit")
+                log.info("%s", "exit")
                 return
             
             self.file_process_status.emit({"file":audio, "status":False, "task": "reasmple audio"})
-            print(f"current task: {audio}")
-            print("reasmple audio...")
+            log.info("%s", f"current task: {audio}")
+            log.info("%s", "reasmple audio...")
 
             try:
                 samples = self.reSampleAudio(audio, 44100, device=device)
                 samples = np.asarray(samples)
-                print("samples shape: ", samples.shape)
+                log.info("%s %s", "samples shape: ", samples.shape)
                 # samples = torch.tensor(samples,dtype=torch.float32).to(device)
             except Exception as e:
-                print(f"resample audio error:\n{str(e)}")
+                log.error("%s", f"resample audio error:\n{str(e)}")
                 self.signal_vr_over.emit(False)
                 self.stop()
 
@@ -95,10 +100,10 @@ class DemucsWorker(QThread):
                 del audio
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                print("exit")
+                log.info("%s", "exit")
                 return
             
-            print("separate sources...")
+            log.info("%s", "separate sources...")
             self.file_process_status.emit({"file":audio, "status":False, "task": "separate sources"})
 
             try:
@@ -111,12 +116,12 @@ class DemucsWorker(QThread):
                                                 self.sampleRate
                                             )
             except Exception as e:
-                print(f"\nseparate audio sources error:\n    {str(e)}")
+                log.error("%s", f"\nseparate audio sources error:\n    {str(e)}")
                 self.signal_vr_over.emit(False)
                 self.stop()
 
             if (sources is None) or (not self.is_running):
-                print("exit")
+                log.info("%s", "exit")
                 del samples
                 del sources
                 del audio
@@ -125,7 +130,7 @@ class DemucsWorker(QThread):
                 return
             
             self.file_process_status.emit({"file":audio, "status":False, "task": "save files"})
-            print("save files...")
+            log.info("%s", "save files...")
 
             try:
                 self.saveResult(
@@ -137,12 +142,12 @@ class DemucsWorker(QThread):
                             )
                 
             except Exception as e:
-                print(f"save audio file error:\n{str(e)}")
+                log.error("%s", f"save audio file error:\n{str(e)}")
                 self.signal_vr_over.emit(False)
                 self.stop()
 
             if not self.is_running:
-                print("exit")
+                log.info("%s", "exit")
                 del samples
                 del sources
                 del audio
@@ -158,7 +163,7 @@ class DemucsWorker(QThread):
                 torch.cuda.empty_cache()
             
         self.signal_vr_over.emit(True)
-        print("over!")
+        log.info("%s", "over!")
         
         # self.model.to("cpu")
         del self.model
@@ -251,10 +256,10 @@ class DemucsWorker(QThread):
     def loadModel(self, model_path:str, device=None):
 
         download_path = os.path.abspath(model_path)
-        print(f"download_path: {download_path}")
+        log.info("%s", f"download_path: {download_path}")
 
         if os.path.exists(download_path):
-            print("found existed model file")
+            log.info("%s", "found existed model file")
         else:
             self.file_process_status.emit({"file":"","status":False,"task":"download model"})
 
@@ -263,7 +268,7 @@ class DemucsWorker(QThread):
         bundle._sample_rate = 44100
 
         sample_rate = bundle.sample_rate
-        print(f"Sample rate: {sample_rate}")
+        log.info("%s", f"Sample rate: {sample_rate}")
 
         if not self.is_running:
             return
@@ -284,12 +289,12 @@ class DemucsWorker(QThread):
             stream_ = next(s for s in av_file.streams if s.codec_context.type == 'audio')
             audio_channel_num = stream_.channels
             if audio_channel_num < 2:
-                print("single-channel audio")
+                log.info("%s", "single-channel audio")
                 split_setore = False
             else:
-                print("multi-channel audio")
+                log.info("%s", "multi-channel audio")
 
-        print("resample audio data")
+        log.info("%s", "resample audio data")
         samples = decode_audio(file_path, sample_rate, split_setore)
         # samples = np.array(samples)
 
@@ -300,7 +305,7 @@ class DemucsWorker(QThread):
     def saveResult(self, model, file_path:str, sources:torch.Tensor, stems:int, output_path:str, sample_rate=44100):
 
         sources_list = model.sources
-        print(f"sources_list: {sources_list}")
+        log.info("%s", f"sources_list: {sources_list}")
 
         # 将不同输出音轨排列成为列表形式存储 元素为 Tensor
         sources = list(sources[0])
@@ -330,7 +335,7 @@ class DemucsWorker(QThread):
             audios["others"] = audios["others"] + audios["drums"]
             audios.pop("drums")
         
-        print(f"output stems: {stems}")
+        log.info("%s", f"output stems: {stems}")
 
         if not output_path:
             output_path = os.path.join(data_dir, file_output)
@@ -338,7 +343,7 @@ class DemucsWorker(QThread):
             output_path = os.path.join(output_path, file_output)
 
         if not os.path.exists(output_path):
-            print(f"create output folder: {output_path}")
+            log.info("%s", f"create output folder: {output_path}")
             os.mkdir(output_path)
 
         for stem in stems:
@@ -348,7 +353,7 @@ class DemucsWorker(QThread):
             #     os.makedirs(output_path_)
             
             output_fileName = os.path.join(output_path_, ".".join([file_output+f"_{stem.lower()}", "wav"]))
-            print(f"save file: {output_fileName}")
+            log.info("%s", f"save file: {output_fileName}")
 
             soundfile.write(output_fileName, spec.numpy().T,  sample_rate)
         

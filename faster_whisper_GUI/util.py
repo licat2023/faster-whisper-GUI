@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import logging
 import datetime
 import glob
 import os
@@ -7,6 +8,8 @@ import re
 import sys
 
 from typing import List, TypedDict, Union
+
+log = logging.getLogger(__name__)
 
 class VADParameters(TypedDict):
     threshold:float = 0.5
@@ -53,8 +56,8 @@ class WhisperParameters(TypedDict):
 
 def outputWithDateTime(text:str):
     dateTime_ = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
-    print(f"\n=========={dateTime_}==========")
-    print(f"=========={text}==========\n")
+    log.info("%s", f"\n=========={dateTime_}==========")
+    log.info("%s", f"=========={text}==========\n")
 
 
 # ---------------------------------------------------------------------------------------------------------------------------
@@ -216,7 +219,7 @@ def setupROCm() -> bool:
 
     root = findROCmRoot()
     if root is None:
-        print("[ROCm] 未检测到 HIP SDK，AMD ROCm 选项不可用")
+        log.info("%s", "[ROCm] 未检测到 HIP SDK，AMD ROCm 选项不可用")
         return False
 
     bin_dir = os.path.join(root, "bin")
@@ -233,12 +236,12 @@ def setupROCm() -> bool:
                 os.add_dll_directory(directory)
                 ROCM_DLL_DIRECTORIES.append(directory)
             except OSError as error:
-                print(f"[ROCm] 注册 DLL 目录失败: {directory} -> {error}")
+                log.error("%s", f"[ROCm] 注册 DLL 目录失败: {directory} -> {error}")
     else:
         ROCM_DLL_DIRECTORIES.extend(directories)
 
     if not ROCM_DLL_DIRECTORIES:
-        print("[ROCm] 没有可用的 DLL 目录")
+        log.info("%s", "[ROCm] 没有可用的 DLL 目录")
         return False
 
     # 同时追加到 PATH，兼容未使用 add_dll_directory 的旧式 DLL 解析
@@ -259,12 +262,12 @@ def setupROCm() -> bool:
     ROCM_AVAILABLE = True
     # 写入进程级标记，使其它模块实例（见 ROCM_ENV_FLAG 的说明）也能读到本状态
     os.environ[ROCM_ENV_FLAG] = "1"
-    print(f"[ROCm] 已启用 HIP 运行时: {root}")
-    print(f"[ROCm]   已注册 DLL 目录 {len(ROCM_DLL_DIRECTORIES)} 个:")
+    log.info("%s", f"[ROCm] 已启用 HIP 运行时: {root}")
+    log.info("%s", f"[ROCm]   已注册 DLL 目录 {len(ROCM_DLL_DIRECTORIES)} 个:")
     for directory in ROCM_DLL_DIRECTORIES:
-        print(f"[ROCm]     {directory}")
-    print(f"[ROCm]   ROCBLAS_USE_HIPBLASLT = {os.environ.get('ROCBLAS_USE_HIPBLASLT')}")
-    print(f"[ROCm]   HSA_OVERRIDE_GFX_VERSION = {os.environ.get('HSA_OVERRIDE_GFX_VERSION')}")
+        log.info("%s", f"[ROCm]     {directory}")
+    log.info("%s", f"[ROCm]   ROCBLAS_USE_HIPBLASLT = {os.environ.get('ROCBLAS_USE_HIPBLASLT')}")
+    log.info("%s", f"[ROCm]   HSA_OVERRIDE_GFX_VERSION = {os.environ.get('HSA_OVERRIDE_GFX_VERSION')}")
     return True
 
 
@@ -283,7 +286,7 @@ def secondsToHMS(t) -> str:
     try:
         t_f:float = float(t)
     except:
-        print("time transform error")
+        log.error("%s", "time transform error")
         return
     
     H = int(t_f // 3600)
@@ -329,7 +332,7 @@ def secondsToMS(t) -> str:
     try:
         t_f:float = float(t)
     except:
-        print("time transform error")
+        log.error("%s", "time transform error")
         return
     
     M = t_f // 60

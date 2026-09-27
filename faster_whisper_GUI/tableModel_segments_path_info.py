@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import logging
 from PySide6.QtCore import QAbstractTableModel, QCoreApplication, QSize, Qt
 # from PySide6.QtWidgets import QStyledItemDelegate, QLineEdit
 from typing import List
@@ -11,6 +12,8 @@ from qfluentwidgets import MessageBox, isDarkTheme
 from .seg_ment import segment_Transcribe
 from .util import HMSToSeconds, secondsToHMS
 from .config import tableItem_dark_warning_BackGround_color, tableItem_light_warning_BackGround_color
+
+log = logging.getLogger(__name__)
 
 # 自定义数据模型，用于在表格中显示数据
 class TableModel(QAbstractTableModel):
@@ -130,7 +133,7 @@ class TableModel(QAbstractTableModel):
                             self._data[row].words = words_list
                             self._data[row].text = text
                         except Exception as e:
-                            print(f"edit words-level timestample error:{e}")
+                            log.error("%s", f"edit words-level timestample error:{e}")
                             return False
                     else:
                         return False

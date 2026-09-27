@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import logging
 import time
 from PySide6.QtCore import (QCoreApplication, 
                             QModelIndex, 
@@ -47,6 +48,8 @@ from qfluentwidgets import (
 
 from .style_sheet import StyleSheet
 from .util import outputWithDateTime
+
+log = logging.getLogger(__name__)
 
 
 class CustomTableItemDelegate(TableItemDelegate):
@@ -248,7 +251,7 @@ class TabInterface(QWidget):
         #         break
 
         # 添加子分页
-        print(f"addSubInterface:{objectName}")
+        log.info("%s", f"addSubInterface:{objectName}")
         self.stackedWidget.addWidget(widget)
 
         # 已经存在的旧结果将会被清除
@@ -299,11 +302,11 @@ class TabInterface(QWidget):
         self.outputWithDateTime("deleteTable")
         
         item = self.tabBar.tabItem(index)
-        print(f"removeTab: {item.routeKey()}")
+        log.info("%s", f"removeTab: {item.routeKey()}")
 
         widget = self.stackedWidget.widget(index)
         
-        print(f"removeTable:{widget.objectName()}")
+        log.info("%s", f"removeTable:{widget.objectName()}")
         self.stackedWidget.removeWidget(widget)
         self.signal_delete_table.emit(item.routeKey())
 
@@ -311,7 +314,7 @@ class TabInterface(QWidget):
         widget.deleteLater()
 
         if self.stackedWidget.count() == 0:
-            print("all clear")
+            log.info("%s", "all clear")
 
 
 class CustomTableView(TableView):
@@ -518,7 +521,7 @@ class CustomTableView(TableView):
     def open_set_speaker_dialog(self):
 
         indexs = self.selectedIndexes()
-        print(len(indexs))
+        log.info("%s", len(indexs))
 
         esmb = CustomMessageBox(
                                 self.tr('说话人'),

@@ -1,9 +1,14 @@
 # coding:utf-8
 
+import logging
 # from threading import Thread
 from typing import (List, Optional, TypedDict, Union)
 from PySide6.QtCore import QThread, Signal
+
+from faster_whisper_GUI.workers import GuardedWorker
 from faster_whisper import WhisperModel
+
+log = logging.getLogger(__name__)
 
 
 class modelParamDict(TypedDict):
@@ -16,7 +21,7 @@ class modelParamDict(TypedDict):
     download_root: Optional[str] 
     local_files_only: bool 
 
-class LoadModelWorker(QThread):
+class LoadModelWorker(GuardedWorker):
     setStatusSignal = Signal(bool)
     loadModelOverSignal = Signal(bool)
 
@@ -54,7 +59,7 @@ class LoadModelWorker(QThread):
         
         if self.use_v3_model:
             # 修正 V3 模型的 mel 滤波器组参数
-            print("\n[Using V3 model, modify  number of mel-filters to 128]")
+            log.info("%s", "\n[Using V3 model, modify  number of mel-filters to 128]")
             #
             # 注意 .astype("float32") 不能省。
             # get_mel_filters() 内部用 numpy 默认精度计算，返回的是 float64；而 FeatureExtractor
@@ -106,13 +111,13 @@ class LoadModelWorker(QThread):
             raise e
 
         try:
-            print("\nLoad over")
-            print(self.model_size_or_path)
-            print(f"{'max_length: ':23}",model.max_length)
-            print(f"{'num_samples_per_token: ':23}", model.num_samples_per_token)
-            print("time_precision: ", model.time_precision)
-            print("tokens_per_second: ", model.tokens_per_second)
-            print("input_stride: ", model.input_stride)
+            log.info("%s", "\nLoad over")
+            log.info("%s", self.model_size_or_path)
+            log.info("%s %s", f"{'max_length: ':23}", model.max_length)
+            log.info("%s %s", f"{'num_samples_per_token: ':23}", model.num_samples_per_token)
+            log.info("%s %s", "time_precision: ", model.time_precision)
+            log.info("%s %s", "tokens_per_second: ", model.tokens_per_second)
+            log.info("%s %s", "input_stride: ", model.input_stride)
 
         except Exception as e:
             

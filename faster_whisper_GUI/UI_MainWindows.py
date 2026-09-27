@@ -1,6 +1,7 @@
 
 # coding:utf-8
 
+import logging
 import os
 # from pathlib import Path
 
@@ -68,6 +69,8 @@ from .demucsPageNavigationInterface import DemucsPageNavigation
 from .aboutPageNavigationInterface import AboutPageNavigationInterface
 from .fasterWhisperGuiIcon import FasterWhisperGUIIcon
 from .settingPageNavigation import SettingPageNavigationInterface
+
+log = logging.getLogger(__name__)
 
 class aa(QWidget):
     def __init__(self, parent: QWidget | None = ..., f: Qt.WindowType = ...) -> None:
@@ -193,7 +196,7 @@ class UIMainWin(FramelessMainWindow):
         try:
             self.setWidgetsStatusFromConfig()
         except Exception as e:
-            print(str(e))
+            log.error("%s", str(e))
 
     def setWidgetsStatusFromConfig(self):
         # 根据读取的配置设置完控件状态之后，根据控件状态设置相关属性

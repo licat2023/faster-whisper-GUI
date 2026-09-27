@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import logging
 from PySide6.QtCore import (QCoreApplication, Qt)
 from PySide6.QtGui import QFont
 
@@ -38,6 +39,8 @@ from .config import (
                 )
 
 from .util import isROCmAvailable
+
+log = logging.getLogger(__name__)
 
 class ModelNavigationInterface(NavigationBaseInterface):
     def __tr(self, text):
@@ -85,7 +88,7 @@ class ModelNavigationInterface(NavigationBaseInterface):
             if index >= 0:
                 device_combox.setCurrentIndex(index)
                 return
-            print(f"[Device] 配置中的设备 {device!r} 当前不可用，回退到 auto")
+            log.info("%s", f"[Device] 配置中的设备 {device!r} 当前不可用，回退到 auto")
             fallback = device_combox.findData("auto")
             device_combox.setCurrentIndex(fallback if fallback >= 0 else 1)
             return
@@ -100,7 +103,7 @@ class ModelNavigationInterface(NavigationBaseInterface):
             device_combox.setCurrentIndex(device if 0 <= device < device_combox.count() else 1)
             return
 
-        print(f"[Device] 无法识别的 device 配置: {device!r}，回退到默认")
+        log.info("%s", f"[Device] 无法识别的 device 配置: {device!r}，回退到默认")
         device_combox.setCurrentIndex(1)
 
     def SignalAndSlotConnect(self):

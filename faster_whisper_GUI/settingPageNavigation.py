@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import logging
 import os
 import random
 import time
@@ -11,6 +12,8 @@ from PySide6.QtWidgets import (
                                 QVBoxLayout, 
                                 QWidget
                             )
+
+from . import logging_setup
 
 from qfluentwidgets import (
                             SwitchButton, 
@@ -32,6 +35,8 @@ from .style_sheet import StyleSheet
 from .config import default_Huggingface_user_token, THEME_COLORS
 
 from .util import outputWithDateTime
+
+log = logging.getLogger(__name__)
 
 class ThemeColorModel(QAbstractListModel):
     def data(self, index, role):
@@ -190,6 +195,26 @@ class SettingPageNavigationInterface(ScrollArea):
         self.paramItemWidget_FWlogFile = ParamWidget(self.__tr("faster-whisper 日志文件"), self.__tr("faster-whisper 转写的日志将保存到该文件中，\n转写过程中如果发生崩溃请参看"), self.pushButton_openFWLogFile)
         self.addWidget(self.paramItemWidget_FWlogFile)
 
+        # --------------------------------------------------------------------------------------------------------------------------------------------------------------
+        # 日志目录 / 诊断包
+        # 每次运行单独一个日志文件（永不覆盖），并自动保留最近若干次。
+        # 「导出诊断包」把本次日志 + 环境快照打成一个 zip，用户直接发出来即可，
+        # 不必再让他去找文件、也不用来回追问环境。
+        self.pushButton_openLogDir = PushButton()
+        self.pushButton_openLogDir.setText(self.__tr("打开目录"))
+
+        self.pushButton_exportDiagnostics = PushButton()
+        self.pushButton_exportDiagnostics.setText(self.__tr("导出诊断包"))
+
+        self.paramItemWidget_logDir = ParamWidget(
+            self.__tr("日志目录"),
+            self.__tr("每次运行生成一个日志文件，并保留最近 20 次，"
+                      "不会因为重新启动而丢失上一次的记录"),
+            self.pushButton_openLogDir)
+        self.paramItemWidget_logDir.widgetVLayout.addWidget(
+            self.pushButton_exportDiagnostics)
+        self.addWidget(self.paramItemWidget_logDir)
+
     def setSwitchStatus(self):
         self.switchButton_autoLoadModel.setChecked(False)
         self.paramItemWidget_autoLoadModel.setEnabled(self.switchButton_saveConfig.isChecked())
@@ -197,13 +222,53 @@ class SettingPageNavigationInterface(ScrollArea):
     def signalAndSlotProcess(self):
         self.switchButton_saveConfig.checkedChanged.connect(self.setSwitchStatus)
         self.pushButton_openTempDir.clicked.connect(lambda: os.startfile(os.path.abspath(r"./temp/").replace("\\","/")))
-        self.pushButton_openLogFile.clicked.connect(lambda: os.startfile(os.path.abspath(r"./fasterwhispergui.log").replace("\\","/")))
-        self.pushButton_openFWLogFile.clicked.connect(lambda: os.startfile(os.path.abspath(r"./faster_whisper.log").replace("\\","/")))  
+        # 日志路径由 logging_setup 决定（每次运行一个文件，绝对路径，不依赖工作目录）
+        self.pushButton_openLogFile.clicked.connect(self.openAppLogFile)
+        self.pushButton_openFWLogFile.clicked.connect(self.openFrameworkLogFile)
+        self.pushButton_openLogDir.clicked.connect(
+            lambda: self.__openInExplorer(logging_setup.getLogDir()))
+        self.pushButton_exportDiagnostics.clicked.connect(self.exportDiagnostics)
         self.pushButton_clearTempFiles.clicked.connect(self.deletTempFiles)
         self.colorPickerButton.colorChanged.connect(self.setThemeColorAndText)
         self.randomPickThemeColorToolButton.clicked.connect(self.setColorAndThemeColorRandom)
         self.themeColorLineEdit.textChanged.connect(self.setThemeColorWithLineEditText)
         
+
+    def openAppLogFile(self):
+        """打开本次运行的日志文件。"""
+        path = logging_setup.getRunLogPath()
+        if path is None or not path.exists():
+            self.__openInExplorer(logging_setup.getLogDir())
+            return
+        os.startfile(str(path))
+
+    def exportDiagnostics(self):
+        """
+        把本次日志 + faster-whisper 日志 + 环境快照打成一个 zip。
+
+        用户把 zip 发出来即可，不必再去找文件、也不用反复追问环境。
+        注意：打包内容不含配置文件（里面存着 HuggingFace token）。
+        """
+        try:
+            bundle = logging_setup.exportDiagnostics()
+        except Exception:                              # noqa: BLE001
+            log.exception("导出诊断包失败")
+            return
+        log.info("诊断包已导出: %s", bundle)
+        # 打开所在目录让用户直接看到产物（本页没有 InfoBar 辅助方法）
+        self.__openInExplorer(bundle.parent)
+
+    def openFrameworkLogFile(self):
+        """打开 faster-whisper 库自身的日志。"""
+        path = logging_setup.getFrameworkLogPath()
+        if path is None or not path.exists():
+            self.__openInExplorer(logging_setup.getLogDir())
+            return
+        os.startfile(str(path))
+
+    def __openInExplorer(self, directory):
+        if directory is not None and directory.exists():
+            os.startfile(str(directory))
 
     def deletTempFiles(self):
         outputWithDateTime("clearTempFiles")
@@ -213,12 +278,12 @@ class SettingPageNavigationInterface(ScrollArea):
                 os.system(r"del .\temp\*.srt")
                 mess_ = MessageBox(self.__tr("提示"), self.__tr("清除成功"), self)
                 mess_.show()
-                print("clear over")
+                log.info("%s", "clear over")
             except Exception as e:
                 mess_ = MessageBox(self.__tr("错误"), self.__tr("清除失败"), self)
-                print(f"clear temp files error: \n    {str(e)}")
+                log.error("%s", f"clear temp files error: \n    {str(e)}")
         else:
-            print("clear temp files cancel")
+            log.info("%s", "clear temp files cancel")
         
     def setParam(self,param:dict) -> None:
         try:

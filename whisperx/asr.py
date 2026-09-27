@@ -1,3 +1,4 @@
+import logging
 import os
 import warnings
 from typing import List, Union, Optional, NamedTuple
@@ -12,6 +13,8 @@ from transformers.pipelines.pt_utils import PipelineIterator
 from .audio import N_SAMPLES, SAMPLE_RATE, load_audio, log_mel_spectrogram
 from .vad import load_vad_model, merge_chunks
 from .types import TranscriptionResult, SingleSegment
+
+log = logging.getLogger(__name__)
 
 def find_numeral_symbol_tokens(tokenizer):
     numeral_symbol_tokens = []
@@ -55,7 +58,7 @@ def load_model(whisper_arch,
     if language is not None:
         tokenizer = faster_whisper.tokenizer.Tokenizer(model.hf_tokenizer, model.model.is_multilingual, task=task, language=language)
     else:
-        print("No language specified, language will be first be detected for each audio file (increases inference time).")
+        log.info("%s", "No language specified, language will be first be detected for each audio file (increases inference time).")
         tokenizer = None
 
     default_asr_options =  {
@@ -281,7 +284,7 @@ class FasterWhisperPipeline(Pipeline):
         if self.suppress_numerals:
             previous_suppress_tokens = self.options.suppress_tokens
             numeral_symbol_tokens = find_numeral_symbol_tokens(self.tokenizer)
-            print(f"Suppressing numeral and symbol tokens: {numeral_symbol_tokens}")
+            log.info("%s", f"Suppressing numeral and symbol tokens: {numeral_symbol_tokens}")
             new_suppressed_tokens = numeral_symbol_tokens + self.options.suppress_tokens
             new_suppressed_tokens = list(set(new_suppressed_tokens))
             self.options = self.options._replace(suppress_tokens=new_suppressed_tokens)
@@ -293,7 +296,7 @@ class FasterWhisperPipeline(Pipeline):
             if print_progress:
                 base_progress = ((idx + 1) / total_segments) * 100
                 percent_complete = base_progress / 2 if combined_progress else base_progress
-                print(f"Progress: {percent_complete:.2f}%...")
+                log.info("%s", f"Progress: {percent_complete:.2f}%...")
             text = out['text']
             if batch_size in [0, 1, None]:
                 text = text[0]
@@ -318,12 +321,12 @@ class FasterWhisperPipeline(Pipeline):
 
     def detect_language(self, audio: np.ndarray):
         if audio.shape[0] < N_SAMPLES:
-            print("Warning: audio is shorter than 30s, language detection may be inaccurate.")
+            log.warning("%s", "Warning: audio is shorter than 30s, language detection may be inaccurate.")
         segment = log_mel_spectrogram(audio[: N_SAMPLES],
                                       padding=0 if audio.shape[0] >= N_SAMPLES else N_SAMPLES - audio.shape[0])
         encoder_output = self.model.encode(segment)
         results = self.model.model.detect_language(encoder_output)
         language_token, language_probability = results[0][0]
         language = language_token[2:-2]
-        print(f"Detected language: {language} ({language_probability:.2f}) in first 30s of audio...")
+        log.info("%s", f"Detected language: {language} ({language_probability:.2f}) in first 30s of audio...")
         return language

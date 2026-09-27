@@ -1,6 +1,9 @@
 # coding:utf-8
 
+import logging
 from PySide6.QtCore import (QThread, Signal)
+
+from faster_whisper_GUI.workers import GuardedWorker
 import torch
 
 import whisperx
@@ -11,7 +14,9 @@ from .seg_ment import (
                     )
 import gc
 
-class WhisperXWorker(QThread):
+log = logging.getLogger(__name__)
+
+class WhisperXWorker(GuardedWorker):
     signal_process_over = Signal(list)
 
     def __init__(
@@ -56,16 +61,16 @@ class WhisperXWorker(QThread):
                     audio = whisperx.load_audio(path)
                     # 重新获取当前系统支持的设备
                     device = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
-                    print("\nTimeStample alignment")
+                    log.info("%s", "\nTimeStample alignment")
 
                     # 获取字典格式的转写结果
-                    print("transform transcript result...")
+                    log.info("%s", "transform transcript result...")
                     segment_dict_list = segmentListToDictionaryList(segments)
 
-                    print("process audio...")
+                    log.info("%s", "process audio...")
 
                     if self.model_alignment is None :
-                        print("load wav2vec2 model...")
+                        log.info("%s", "load wav2vec2 model...")
                         
                         self.setStateTool(text="load wav2vec2 model...",status=False)
                         self.model_alignment, self.metadata_alignment = whisperx.load_align_model(language_code=info.language
@@ -74,7 +79,7 @@ class WhisperXWorker(QThread):
                                                                                                 ,cache_dir=r"./cache"
                                                                                             )
                         
-                    print("start alignment...")
+                    log.info("%s", "start alignment...")
                     self.setStateTool(text="start alignment...",status=False)
     
                     result_a = whisperx.align(segment_dict_list, self.model_alignment, self.metadata_alignment, audio, device, return_char_alignments=False)
@@ -86,8 +91,8 @@ class WhisperXWorker(QThread):
                     result_a_c = Removerepetition(result_a=result_a)
 
                 except Exception as e:
-                    print("alignment Error")
-                    print(f"Error: {e}")
+                    log.error("%s", "alignment Error")
+                    log.error("%s", f"Error: {e}")
                     self.alignment = False
                     self.signal_process_over.emit(None)
                     result_a_c = segments
@@ -102,12 +107,12 @@ class WhisperXWorker(QThread):
                 if audio is None:
                     audio = whisperx.load_audio(path)
                 try:
-                    print("\nSpeaker diarize and alignment")
+                    log.info("%s", "\nSpeaker diarize and alignment")
                     # 重新获取当前系统支持的设备
                     device = (torch.device('cuda') if torch.cuda.is_available() else torch.device('cpu'))
 
                     if self.diarize_model is None:
-                        print("load speaker brain model...")
+                        log.info("%s", "load speaker brain model...")
                         self.setStateTool("load models...", False)
                         self.diarize_model = whisperx.DiarizationPipeline(
                                                                             use_auth_token=self.use_auth_token
@@ -117,28 +122,28 @@ class WhisperXWorker(QThread):
                         
                     # 检查结果
                     if self.diarize_model is None:
-                        print("load speaker brain model failed...")
+                        log.error("%s", "load speaker brain model failed...")
                         self.setStateTool("load model failed", False)
                         self.signal_process_over.emit(None)
                         return
 
-                    print("speaker diarize...")
+                    log.info("%s", "speaker diarize...")
                     self.setStateTool("start diarize...", False)
                     self.diarize_segments = self.diarize_model(audio
                                                             , min_speakers=self.min_speaker
                                                             , max_speakers=self.max_speaker
                                                         )
                     if not self.alignment:
-                        print("process transcription result...")
+                        log.info("%s", "process transcription result...")
                         result_a_c = {"segments":segmentListToDictionaryList(result_a_c)}
 
-                    print("speaker alignment...")
+                    log.info("%s", "speaker alignment...")
                     self.setStateTool("assign speakers to words...")
                     result_s = whisperx.assign_word_speakers(self.diarize_segments, result_a_c)
 
                     # 检查结果
                     if result_s is None:
-                        print("assign speakers to words failed...")
+                        log.error("%s", "assign speakers to words failed...")
                         self.setStateTool("assign speakers to words failed", False)
                         self.signal_process_over.emit(None)
                         return
@@ -151,8 +156,8 @@ class WhisperXWorker(QThread):
                     #         print(f"  [{segment['start']:.2f}s -> {segment['end']:.2f}s] | {segment['text']}")
 
                 except Exception as e:
-                    print("failed to diarize speaker!")
-                    print(f"Error: {e}")
+                    log.error("%s", "failed to diarize speaker!")
+                    log.error("%s", f"Error: {e}")
                     result_s = result_a_c
                     self.speaker_diarize = False
                     self.signal_process_over.emit(None)
@@ -169,8 +174,8 @@ class WhisperXWorker(QThread):
                     # 字典列表转换回对象列表
                     segments = dictionaryListToSegmentList(result_s['segments'])
             except Exception as e:
-                print("failed to transform alignment result!")
-                print(str(e))
+                log.error("%s", "failed to transform alignment result!")
+                log.error("%s", str(e))
                 self.signal_process_over.emit(None)
                 return
 
@@ -208,7 +213,7 @@ class WhisperXWorker(QThread):
         try:
             self.parent().setStateTool(text=text,status=status)
         except Exception as e:
-            print(f"To set StateTool Error: {e}")
+            log.error("%s", f"To set StateTool Error: {e}")
 
 
 

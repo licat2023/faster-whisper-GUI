@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import logging
 import os
 from threading import Thread
 
@@ -31,6 +32,8 @@ from qfluentwidgets import (
 from .style_sheet import StyleSheet
 from .config import SUBTITLE_FORMAT
 from typing import TypedDict
+
+log = logging.getLogger(__name__)
 
 class ignore_files_info(TypedDict):
     ignore_files: list[str]
@@ -70,11 +73,11 @@ class FileNameListView(QWidget):
 
         if not all(files_exist):
             ignore_file = [file for file in fileNameList if not os.path.exists(file)]
-            print(self.__tr("存在无效文件："))
+            log.info("%s", self.__tr("存在无效文件："))
             new_line = "\n                    "
-            print(f"  Error FilesName : {new_line.join(ignore_file)}")
+            log.info("%s", f"  Error FilesName : {new_line.join(ignore_file)}")
             new_line = "\n                "
-            print(f"  ignore files: {new_line.join(ignore_file)}")
+            log.info("%s", f"  ignore files: {new_line.join(ignore_file)}")
             fileNameList = [file for file in fileNameList if os.path.exists(file)]
 
             ifi = ignore_files_info(ignore_files=ignore_file, ignore_reason=self.__tr("存在无效文件，已剔除"))
@@ -97,7 +100,7 @@ class FileNameListView(QWidget):
         
         if len(ignore_files) > 0:
             new_line = "\n              "
-            print(f"ignore files: {new_line.join(ignore_files)}")
+            log.info("%s", f"ignore files: {new_line.join(ignore_files)}")
 
             ifi = ignore_files_info(ignore_files=ignore_files,ignore_reason=self.__tr("已知的字幕格式文件已忽略："))
             self.ignore_files_signal.emit(ifi)
@@ -134,7 +137,7 @@ class FileNameListView(QWidget):
             try:
                 cont = av.open(fileName, metadata_errors="ignore")
             except Exception as e:
-                print(f"InvalidDataError : {fileName} \nerror:{str(e)}")
+                log.error("%s", f"InvalidDataError : {fileName} \nerror:{str(e)}")
                 ignoreFile.append(fileName)
             
             if cont is not None:
@@ -184,7 +187,7 @@ class FileNameListView(QWidget):
             
             if file in self.avFileList:
                 file_ignored.append(file)
-                print(f"Exited File: {file}")
+                log.info("%s", f"Exited File: {file}")
                 continue
             
             self.avFileList.append(file)

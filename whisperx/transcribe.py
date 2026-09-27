@@ -1,3 +1,4 @@
+import logging
 import argparse
 import gc
 import os
@@ -12,6 +13,8 @@ from .audio import load_audio
 from .diarize import DiarizationPipeline, assign_word_speakers
 from .utils import (LANGUAGES, TO_LANGUAGE_CODE, get_writer, optional_float,
                     optional_int, str2bool)
+
+log = logging.getLogger(__name__)
 
 
 def cli():
@@ -162,7 +165,7 @@ def cli():
     for audio_path in args.pop("audio"):
         audio = load_audio(audio_path)
         # >> VAD & ASR
-        print(">>Performing transcription...")
+        log.info("%s", ">>Performing transcription...")
         result = model.transcribe(audio, batch_size=batch_size, chunk_size=chunk_size, print_progress=print_progress)
         results.append((result, audio_path))
 
@@ -187,9 +190,9 @@ def cli():
             if align_model is not None and len(result["segments"]) > 0:
                 if result.get("language", "en") != align_metadata["language"]:
                     # load new language
-                    print(f"New language found ({result['language']})! Previous was ({align_metadata['language']}), loading new alignment model for new language...")
+                    log.info("%s", f"New language found ({result['language']})! Previous was ({align_metadata['language']}), loading new alignment model for new language...")
                     align_model, align_metadata = load_align_model(result["language"], device)
-                print(">>Performing alignment...")
+                log.info("%s", ">>Performing alignment...")
                 result = align(result["segments"], align_model, align_metadata, input_audio, device, interpolate_method=interpolate_method, return_char_alignments=return_char_alignments, print_progress=print_progress)
 
             results.append((result, audio_path))
@@ -202,9 +205,9 @@ def cli():
     # >> Diarize
     if diarize:
         if hf_token is None:
-            print("Warning, no --hf_token used, needs to be saved in environment variable, otherwise will throw error loading diarization model...")
+            log.error("%s", "Warning, no --hf_token used, needs to be saved in environment variable, otherwise will throw error loading diarization model...")
         tmp_results = results
-        print(">>Performing diarization...")
+        log.info("%s", ">>Performing diarization...")
         results = []
         diarize_model = DiarizationPipeline(use_auth_token=hf_token, device=device)
         for result, input_audio_path in tmp_results:

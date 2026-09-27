@@ -1,5 +1,6 @@
 # coding:utf-8
 
+import logging
 from PySide6.QtCore import  Qt
 from PySide6.QtWidgets import (
                                 QHBoxLayout,
@@ -20,6 +21,8 @@ from .navigationInterface import NavigationBaseInterface
 from .tableViewInterface import TabInterface
 from .outputLabelLineEditButtonWidget import OutputGroupWidget
 from .config import ENCODING_DICT
+
+log = logging.getLogger(__name__)
 
 class OutputPageNavigationInterface(NavigationBaseInterface):
     def __init__(self, parent=None):
@@ -43,7 +46,7 @@ class OutputPageNavigationInterface(NavigationBaseInterface):
             self.combox_output_code.setCurrentIndex(param["outputEncoding"] )
 
         except Exception as e:
-            print(f"set output-whisperX param error: {str(e)}")
+            log.error("%s", f"set output-whisperX param error: {str(e)}")
 
     def getParam(self) -> dict:
         param = {}

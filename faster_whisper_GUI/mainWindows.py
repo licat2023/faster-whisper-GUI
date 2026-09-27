@@ -1,6 +1,7 @@
 # coding:utf-8
 
 import json
+import logging
 import sys
 import os
 import time
@@ -35,6 +36,7 @@ from faster_whisper.transcribe import Word
 
 import torch
 
+from . import logging_setup
 from .config import (
                     Task_list
                     , STR_BOOL
@@ -72,23 +74,12 @@ from .split_audio import SplitAudioFileWithSpeakersWorker
 
 import opencc
 
+log = logging.getLogger(__name__)
+
 
 # =======================================================================================
 # SignalStore
 # =======================================================================================
-class RedirectOutputSignalStore(QObject):
-    outputSignal = Signal(str)
-    def flush( self ):
-        pass
-    def fileno( self ):
-        return -1
-    def write( self, text ):
-        try:
-            if ( not self.signalsBlocked() ):
-                self.outputSignal.emit(str(text))
-        except:
-            pass
-
 class statusToolsSignalStore(QObject):
     StateToolSignal = Signal(bool)
     LoadModelSignal = Signal(bool)
@@ -99,28 +90,19 @@ class statusToolsSignalStore(QObject):
 class MainWindows(UIMainWin):
     """C"""
 
-    # def writeLog(self, text:str):
-    #     def go(text:str):
-    #         self.log.write(text)
-    #     t1 = Thread(target=go, args=(text))
-    #     t1.start()
-
     def __tr(self, text):
         return QCoreApplication.translate(self.__class__.__name__, text)
-    
-    log = open(r"./fasterwhispergui.log" ,"a" ,encoding="utf8", buffering=1)
 
     def __init__(self):
 
         # self.translator = translator
-    
-        # 重定向输出
-        self.redirectErrOutpur = RedirectOutputSignalStore()
-        self.redirectErrOutpur.outputSignal.connect(lambda text: self.log.write(text))
-        # self.redirectErrOutpur.outputSignal.connect(self.writeLog)
-        # self.redirectErrOutpur.outputSignal.connect(lambda text: Thread(target=self.log.write, args=(text)).start())
-        sys.stderr = self.redirectErrOutpur
-        sys.stdout = self.redirectErrOutpur
+
+        # 输出重定向由 logging_setup 统一负责（见 FasterWhisperGUI.py 的日志引导）。
+        # 这里只做幂等兜底：万一本类被单独使用（没有经过引导），也要能正常跑。
+        logging_setup.setupLogging()
+        logging_setup.installOutputStreams()
+
+        self._guiHandler = None
 
         super().__init__()
 
@@ -185,25 +167,18 @@ class MainWindows(UIMainWin):
         self.page_process.processResultText.insertPlainText(text)
 
     # ==============================================================================================================
-    # 输出重定向，但目前不再进行错误信息重定向，错误信息始终输出到 log 文件
+    # 把界面文本框接进日志管道
     # ==============================================================================================================
-    def redirectOutput(self, target : callable):
-        # 重定向输出
-        sys.stdout = RedirectOutputSignalStore()
-        sys.stdout.outputSignal.connect(target)
-        # 同时写一份到日志文件
-        #
-        # 原因：outputSignal 是跨线程投递的，需要主线程事件循环来派发。若主线程忙于其它事情，
-        # 这些输出就不会被送达（GUI 文本框看起来是空的），日志里也完全没有记录，导致
-        # "程序到底是在跑还是卡住了" 无法判断。这里额外直连日志，保证输出一定会落盘。
-        sys.stdout.outputSignal.connect(self.writeToLogFile, Qt.ConnectionType.DirectConnection)
+    def redirectOutput(self, target: callable):
+        """
+        让日志同时显示到界面文本框。
 
-    def writeToLogFile(self, text: str):
-        """把重定向的输出直接写入日志文件（绕过跨线程信号投递的时序问题）"""
-        try:
-            self.log.write(text)
-        except Exception:
-            pass
+        文件那一份由 logging 的 FileHandler 直接写盘，不受界面影响；
+        这里只是额外挂一个出口。旧实现把 sys.stdout 换成一个 Qt 信号对象，
+        结果是「信号没派发出去 = 日志里也什么都没有」，排查时最难办的正是这种状态。
+        """
+        logging_setup.detachHandler(self._guiHandler)
+        self._guiHandler = logging_setup.attachGuiHandler(target)
 
     # ==============================================================================================================
 
@@ -215,7 +190,7 @@ class MainWindows(UIMainWin):
         
         model_param = self.getParam_model()
         for key, value in model_param.items():
-            print(f"    -{key}: {value}")
+            log.info("%s", f"    -{key}: {value}")
 
         model_size_or_path = model_param["model_size_or_path"]
 
@@ -314,29 +289,29 @@ class MainWindows(UIMainWin):
         
         if self.transcribe_thread is None and self.audio_capture_thread is None:
             self.processResultText.setText("")
-            print("AudioCapture")
+            log.info("%s", "AudioCapture")
             VAD_param :dict = self.getVADparam()
 
             # vad 启用标识
             vad_filter = VAD_param["vad_filter"]
-            print(f"vad_filter : {vad_filter}")
+            log.info("%s", f"vad_filter : {vad_filter}")
             
             if vad_filter:
                 # VAD 参数
                 VAD_param = VAD_param["param"]
                 for key, Value in VAD_param.items():
-                    print(f"  {key:<24} : {Value}")
+                    log.info("%s", f"  {key:<24} : {Value}")
             else:
                 VAD_param = {}
 
             # 转写参数
             Transcribe_params : dict = self.page_transcribes.getParamTranscribe()
-            print("Transcribes options:")
+            log.info("%s", "Transcribes options:")
             for key, value in Transcribe_params.items():
-                print(f"  {key} : {value}")
+                log.info("%s", f"  {key} : {value}")
 
             if self.FasterWhisperModel is None:
-                print(self.__tr("模型未加载！进程退出"))
+                log.info("%s", self.__tr("模型未加载！进程退出"))
                 self.transcribeOver(None)
                 
                 return
@@ -385,7 +360,7 @@ class MainWindows(UIMainWin):
             self.outputWithDateTime("Process")
             
             # 重定向输出
-            print("redirect std output")
+            log.info("%s", "redirect std output")
             self.redirectOutput(self.setTextAndMoveCursorToProcessBrowser)
             self.page_process.processResultText.setText("")
 
@@ -405,23 +380,19 @@ class MainWindows(UIMainWin):
             else:
                 VAD_param = {}
             
-            print(output_str)
-            self.log.write(output_str)
+            log.info("%s", output_str)
 
             # 转写参数
             Transcribe_params : dict = self.getParamTranscribe()
             
-            print(f"language:{Transcribe_params['language']}")
-            print("Transcribes options:")
-            self.log.write("Transcribes options:\n")
+            log.info("%s", f"language:{Transcribe_params['language']}")
+            log.info("%s", "Transcribes options:")
 
             for key, value in Transcribe_params.items():
-                print(f"    -{key} : {value}")
-                self.log.write(f"    -{key} : {value}\n")
+                log.info("%s", f"    -{key} : {value}")
 
             if self.FasterWhisperModel is None:
-                print(self.__tr("模型未加载！进程退出"))
-                self.log.write("model is not loaded! over")
+                log.info("%s", self.__tr("模型未加载！进程退出"))
                 self.raiseErrorInfoBar(title=self.__tr("错误") , content=self.__tr("模型未加载！"))
                 self.transcribeOver(None)
                 self.stackedWidget.setCurrentWidget(self.page_model)
@@ -429,8 +400,7 @@ class MainWindows(UIMainWin):
             
             # print(Transcribe_params['audio'])
             if (len(Transcribe_params['audio']) == 0 and self.page_process.transceibe_Files_RadioButton.isChecked()) or (len(Transcribe_params["audio"]) == 1 and Transcribe_params["audio"][0] == ""):
-                print("No input files!")
-                self.log.write("No input files!")
+                log.info("%s", "No input files!")
                 self.raiseErrorInfoBar(
                                         title=self.__tr("错误")
                                         , content=self.__tr("没有选择有效的音视频文件作为转写对象") 
@@ -442,10 +412,12 @@ class MainWindows(UIMainWin):
             try:
                 num_worker = int(self.page_model.LineEdit_num_workers.text())
             except Exception as e:
+                # 静默改成 1 会让"设了并发数却没生效"无从察觉
+                log.warning("并发数无法解析（%r），已退回 1: %s",
+                            self.page_model.LineEdit_num_workers.text(), e)
                 num_worker = 1
 
             # 创建进程
-            self.log.write(f"create transcribe process with {num_worker} workers\n")
             self.transcribe_thread = TranscribeWorker(
                                                         model = self.FasterWhisperModel
                                                         , parameters = Transcribe_params
@@ -461,16 +433,14 @@ class MainWindows(UIMainWin):
             self.page_process.button_process.setIcon(r":/resource/Image/Cancel_red.svg")
 
             # 启动进程
-            self.log.write(f"start transcribe process\n")
+            log.info("create transcribe process with %d workers", num_worker)
+            log.info("start transcribe process")
             # self.transcribe_thread.is_running == True
             self.transcribe_thread.start()
             self.setStateTool(self.__tr("音频处理"), self.__tr("正在处理中"), False)
         
         elif self.transcribe_thread is not None and self.transcribe_thread.isRunning():
-            # 此处由于输出被重定向只能手动写log文件
-            dateTime_ = datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')
-            self.log.write(f"\n=========={dateTime_}==========\n")
-            self.log.write(f"==========Cancel==========\n")
+            outputWithDateTime("Cancel")
 
             messageBoxW = MessageBox(   
                                         self.__tr("取消")
@@ -481,7 +451,6 @@ class MainWindows(UIMainWin):
             if messageBoxW.exec():
                 self.page_process.button_process.setEnabled(False)
                 self.cancelTrancribe()
-                sys.stdout = self.redirectErrOutpur
                 self.setStateTool(text=self.__tr("已取消"), status=True)
                 
     
@@ -491,11 +460,11 @@ class MainWindows(UIMainWin):
         self.page_process.button_process.setIcon(FasterWhisperGUIIcon.PROCESS)
         
     def cancelTrancribe(self):
-        print("Canceling...")
+        log.info("%s", "Canceling...")
         self.transcribe_thread.stop()
         self.transcribe_thread.requestInterruption()
         self.raiseErrorInfoBar(title=self.__tr("取消"),content=self.__tr("操作已被用户取消"))
-        print("【Process Canceled By User!】")
+        log.info("%s", "【Process Canceled By User!】")
         self.resetButton_process()
         
     def audioCaptureOver(self):
@@ -529,13 +498,13 @@ class MainWindows(UIMainWin):
                 continue
 
             # 从 objectName 获取文件名
-            print(tabBarItem.routeKey())
+            log.info("%s", tabBarItem.routeKey())
             tabBarItem_objectName_fileName = "_".join(tabBarItem.routeKey().split("_")[1:]).replace("\\", "/")
             # print(f"current tabBarItem_objectName_fileName:{tabBarItem_objectName_fileName}")
             # 标签名存在文件名列表中且文件路径在目录列表中的时候 更新相关表格的数据
             if tabBarItem_objectName_fileName in file_list:
                 # 转写结果已经存在的情况下更新数据
-                print(f"updata table:{tabBarItem_objectName_fileName}")
+                log.info("%s", f"updata table:{tabBarItem_objectName_fileName}")
                 # self.tableModel_list.pop(tabBarItem_objectName_fileName)
                 # table_model = TableModel(results[file_list.index(tabBarItem_objectName_fileName)][0])
                 # self.tableModel_list[tabBarItem_objectName_fileName] = table_model
@@ -569,10 +538,10 @@ class MainWindows(UIMainWin):
         # self.createResultInTable(results=results)
 
         if len(self.tableModel_list) == 0:
-            print("Create Tables")
+            log.info("%s", "Create Tables")
             self.createResultInTable(results=results)
         else:
-            print("UPdata DataModel")
+            log.info("%s", "UPdata DataModel")
             self.changeTableData(results)
 
     def createResultInTable(self, results):
@@ -599,13 +568,13 @@ class MainWindows(UIMainWin):
             
             i += 1
         
-        print(f"len_model: {len(self.tableModel_list)}")
+        log.info("%s", f"len_model: {len(self.tableModel_list)}")
 
     def simplifiedAndTraditionalChineseConvert(self, segments, language):
         # 設置轉換器
                     if language == "Auto" or language == "zhs":
-                        print(f"convert to Simplified Chinese")
-                        print(f"len:{len(segments)}")
+                        log.info("%s", f"convert to Simplified Chinese")
+                        log.info("%s", f"len:{len(segments)}")
                         cc = opencc.OpenCC('t2s')
 
                         # for segment in segment_:
@@ -619,8 +588,8 @@ class MainWindows(UIMainWin):
                             #         print(f"    {word.word} --> {new_word}")
                             #         word.word = new_word
                     elif language == "zht":
-                        print(f"convert to Traditional Chinese")
-                        print(f"len:{len(segments)}")
+                        log.info("%s", f"convert to Traditional Chinese")
+                        log.info("%s", f"len:{len(segments)}")
                         cc = opencc.OpenCC('s2t')
 
                     # 轉換簡繁
@@ -653,7 +622,6 @@ class MainWindows(UIMainWin):
         self.setStateTool(text=self.__tr("结束"), status=True)
         self.transcribe_thread = None
         self.resetButton_process()
-        sys.stdout = self.redirectErrOutpur
 
         if segments_path_info is not None and len(segments_path_info) > 0:
             
@@ -667,12 +635,12 @@ class MainWindows(UIMainWin):
             for segments in self.result_faster_whisper:
                 segment_, path, info = segments
                 if info.language == "zh":
-                    print(path, info.language)
+                    log.info("%s %s", path, info.language)
                     language_param = self.page_transcribes.combox_language.currentText().split("-")[0]
 
                     self.simplifiedAndTraditionalChineseConvert(segment_,language_param)
                     
-            print(f"len_segments_path_info_result: {len(segments_path_info)}")
+            log.info("%s", f"len_segments_path_info_result: {len(segments_path_info)}")
             
             
             if self.page_setting.combox_autoGoToOutputPage.currentIndex() == 0:
@@ -911,7 +879,7 @@ class MainWindows(UIMainWin):
 
         if not self.page_model.model_online_RadioButton.isChecked():
             # QMessageBox.warning(self, "错误", "必须选择在线模型时才能使用本功能", QMessageBox.Yes, QMessageBox.Yes)
-            print(self.__tr("Model Convert only Work In Onlie-Mode"))
+            log.info("%s", self.__tr("Model Convert only Work In Onlie-Mode"))
             self.raiseErrorInfoBar(
                                     self.__tr("错误")
                                     , self.__tr("转换功能仅在在线模式下工作")
@@ -925,15 +893,15 @@ class MainWindows(UIMainWin):
         use_local_files = self.page_model.combox_local_files_only.currentText()
         use_local_files = STR_BOOL[use_local_files]
 
-        print(self.__tr("Convert Model: "))
-        print(f"  model_name_or_path : {model_name_or_path}")
-        print(f"  model_output_dir   : {model_output_dir}")
-        print(f"  download_cache_dir : {download_cache_dir}")
-        print(f"  quantization       : {quantization}")
-        print(f"  use_local_files    : {use_local_files}")
+        log.info("%s", self.__tr("Convert Model: "))
+        log.info("%s", f"  model_name_or_path : {model_name_or_path}")
+        log.info("%s", f"  model_output_dir   : {model_output_dir}")
+        log.info("%s", f"  download_cache_dir : {download_cache_dir}")
+        log.info("%s", f"  quantization       : {quantization}")
+        log.info("%s", f"  use_local_files    : {use_local_files}")
 
         if model_output_dir == "":
-            print("\nOutput directory is required!")
+            log.info("%s", "\nOutput directory is required!")
             return
     
         thread_go = Thread(target=ConvertModel, daemon=True, args=[model_name_or_path, download_cache_dir,model_output_dir, quantization, use_local_files])
@@ -968,7 +936,7 @@ class MainWindows(UIMainWin):
             self.setStateTool(text=self.__tr("结束"), status=True)
             self.raiseErrorInfoBar(
                                     title=self.__tr("错误"),
-                                    content=self.__tr("加载失败，退出并检查 fasterWhispergui.log 文件可能会获取错误信息。")
+                                    content=self.__tr("加载失败，退出并检查 日志文件（设置页「日志文件」可打开）可能会获取错误信息。")
                                 )
 
     def setModelStatusLabelTextForAll(self, status:bool):
@@ -1002,7 +970,7 @@ class MainWindows(UIMainWin):
 
     def outputSubtitleFile(self):
 
-        self.log.write("\n==========OutputSubtitleFiles==========\n")
+        outputWithDateTime("OutputSubtitleFiles")
 
         format = self.page_output.combox_output_format.currentText()
         output_dir = self.page_output.outputGroupWidget.LineEdit_output_dir.text()
@@ -1034,7 +1002,7 @@ class MainWindows(UIMainWin):
         
         self.setStateTool(title=self.__tr("WhisperX"), text=self.__tr("结束"), status=True)
         # if segments_path_info is None:
-        #     self.raiseErrorInfoBar(self.__tr("错误"), content=self.__tr("对齐失败，退出软件后检查 fasterwhispergui.log 文件可能会获取错误信息"))
+        #     self.raiseErrorInfoBar(self.__tr("错误"), content=self.__tr("对齐失败，退出软件后检查 日志文件（设置页「日志文件」可打开）可能会获取错误信息"))
         #     return
 
         self.result_whisperx_aligment = segments_path_info
@@ -1049,7 +1017,7 @@ class MainWindows(UIMainWin):
         else:
             self.raiseErrorInfoBar(
                                     self.__tr("错误"),
-                                    content=self.__tr("对齐失败，检查 fasterwhispergui.log 文件可能会获取更多信息")
+                                    content=self.__tr("对齐失败，检查 日志文件（设置页「日志文件」可打开）可能会获取更多信息")
                                 )
         try:
             del self.whisperXWorker.model_alignment
@@ -1111,8 +1079,8 @@ class MainWindows(UIMainWin):
 
         if self.whisperXWorker is None:
 
-            print(f"min_speaker: {whisperParams['min_speaker']}")
-            print(f"max_speaker: {whisperParams['max_speaker']}")
+            log.info("%s", f"min_speaker: {whisperParams['min_speaker']}")
+            log.info("%s", f"max_speaker: {whisperParams['max_speaker']}")
 
             self.whisperXWorker = WhisperXWorker(result_needed
                                                 , alignment=False
@@ -1151,7 +1119,7 @@ class MainWindows(UIMainWin):
 
         self.setStateTool(title=self.__tr("WhisperX"), text=self.__tr("结束"), status=True)
         if segments_path_info is None:
-            self.raiseErrorInfoBar(self.__tr("错误"),content=self.__tr("声源分离失败，退出软件后检查 fasterwhispergui.log 文件可能会获取错误信息"))
+            self.raiseErrorInfoBar(self.__tr("错误"),content=self.__tr("声源分离失败，退出软件后检查 日志文件（设置页「日志文件」可打开）可能会获取错误信息"))
             return
         
         self.result_whisperx_speaker_diarize = segments_path_info
@@ -1208,11 +1176,11 @@ class MainWindows(UIMainWin):
                     return True
             
             if not flag:
-                print(f"No audio stream found in file: {file_path}")
+                log.info("%s", f"No audio stream found in file: {file_path}")
             
             av_cont.close()
         except Exception as e:
-            print(f"file open error: {e}")
+            log.error("%s", f"file open error: {e}")
             flag = None
             
         return flag
@@ -1240,7 +1208,7 @@ class MainWindows(UIMainWin):
             message_W.show()
             return
 
-        print(f"open audio file: {file}")
+        log.info("%s", f"open audio file: {file}")
 
         dataDir,_ = os.path.split(file)
         self.page_process.fileNameListView.avDataRootDir = dataDir
@@ -1259,7 +1227,7 @@ class MainWindows(UIMainWin):
 
         # 当字幕文件目录所指向的文件存在时
         if os.path.exists(file_subtitle_fileName):
-            print(f"find existed srt file: {file_subtitle_fileName}")
+            log.info("%s", f"find existed srt file: {file_subtitle_fileName}")
             # 获取文件的后缀名
             # ext_ = file_subtitle_fileName.split(".")[-1]
 
@@ -1274,7 +1242,7 @@ class MainWindows(UIMainWin):
             # print(ext_)
             
             if file_subtitle_fileName and os.path.isfile(file_subtitle_fileName):
-                print(f"get subtitle file: {file_subtitle_fileName}")
+                log.info("%s", f"get subtitle file: {file_subtitle_fileName}")
             else:
                 messageBoxDia_ = MessageBox(self.__tr("没有字幕文件"),self.__tr("必须要有有效的字幕文件"),self)
                 messageBoxDia_.show()
@@ -1288,8 +1256,8 @@ class MainWindows(UIMainWin):
             else:
                 segments = readSRTFileToSegments(file_subtitle_fileName, file_code=ENCODING_DICT[code_])
         except Exception as e:
-            print("read subtitle file failed:")
-            print(f"    {str(e)}")
+            log.error("%s", "read subtitle file failed:")
+            log.error("%s", f"    {str(e)}")
             self.raiseErrorInfoBar(self.__tr("读取失败"), self.__tr("读取字幕文件失败 \n检查日志文件可能会获取更多信息"))
             return
         # 输出字幕文件内容
@@ -1406,7 +1374,7 @@ class MainWindows(UIMainWin):
             return
 
         for key,value in param.items():
-            print(f"{key}: {value}")
+            log.info("%s", f"{key}: {value}")
 
         if self.demucsWorker is None:
             self.demucsWorker = DemucsWorker(
@@ -1473,13 +1441,13 @@ class MainWindows(UIMainWin):
         
         if self.current_result is not None and self.page_transcribes.LineEdit_temperature.text().strip() != "0" :
 
-            print(f"Temperature: {self.page_transcribes.LineEdit_temperature.text().strip()} and transcript has already been run")
-            print("Temperature fallback configuration may take effect, that may take crash when unload model from memory!")
+            log.info("%s", f"Temperature: {self.page_transcribes.LineEdit_temperature.text().strip()} and transcript has already been run")
+            log.info("%s", "Temperature fallback configuration may take effect, that may take crash when unload model from memory!")
             messB = MessageBox(self.__tr("警告"), self.__tr("温度不为 \"0\" 且已运行过转写，\n温度回退配置可能会生效，\n从内存中卸载模型可能导致软件崩溃！"),self)
             messB.yesButton.setText(self.__tr("继续"))
             messB.cancelButton.setText(self.__tr("取消"))
             if not messB.exec_():
-                print("canceled")
+                log.info("%s", "canceled")
                 return
             
         try:
@@ -1494,11 +1462,11 @@ class MainWindows(UIMainWin):
 
             self.setModelStatusLabelTextForAll(False)
             self.raiseSuccessInfoBar(self.__tr("卸载模型成功"), self.__tr("卸载模型成功"))
-            print("unload model succeed")
+            log.info("%s", "unload model succeed")
 
         except Exception as e:
-            print("unload model failed")
-            print(str(e))
+            log.error("%s", "unload model failed")
+            log.error("%s", str(e))
             self.raiseErrorInfoBar(self.__tr("卸载模型失败"), self.__tr("卸载模型失败，请在转写之前禁用温度回退配置"))
 
         # 清理缓存
@@ -1612,7 +1580,7 @@ class MainWindows(UIMainWin):
 
         except Exception as e:
             self.raiseErrorBar(self.__tr("加载配置文件失败"), self.__tr("配置文件加载失败:\n") + str(e))
-            print(str(e))
+            log.error("%s", str(e))
 
         # 根据读取的配置设置完控件状态之后，根据控件状态设置相关属性
         # self.page_output.tableTab.onDisplayModeChanged(self.page_output.tableTab.closeDisplayModeComboBox.currentIndex())
@@ -1634,43 +1602,43 @@ class MainWindows(UIMainWin):
         
     def deleteResultTableEvent(self, routeKey:str):
 
-        print(f"len_DataModel:{len(self.tableModel_list)}")
+        log.info("%s", f"len_DataModel:{len(self.tableModel_list)}")
         for tb in self.tableModel_list.items():
-            print(f"    {tb[0]}")
-        print(f"data to delete: {routeKey}")
+            log.info("%s", f"    {tb[0]}")
+        log.info("%s", f"data to delete: {routeKey}")
         file_key ="_".join(routeKey.split("_")[1:]) 
-        print(f"key: {file_key}")
+        log.info("%s", f"key: {file_key}")
         self.tableModel_list.pop(file_key)
-        print(f"len_DataModel_after_pop:{len(self.tableModel_list)}")
+        log.info("%s", f"len_DataModel_after_pop:{len(self.tableModel_list)}")
 
         for result in [se for se in [self.current_result ,self.result_faster_whisper, self.result_whisperx_aligment, self.result_whisperx_speaker_diarize] if se is not None]:
-            print(f"len_result: {len(result)}")
+            log.info("%s", f"len_result: {len(result)}")
             for segmengs in result:
                 if segmengs[1] == file_key:
                     result.remove(segmengs)
                     
         try:
-            print(f"len_current_result_after_pop: {len(self.current_result)}")
+            log.info("%s", f"len_current_result_after_pop: {len(self.current_result)}")
             if self.current_result is not None and len(self.current_result) == 0:
                 self.current_result = None
         except Exception:
             pass
 
         try:
-            print(f"len_result_faster_whisper_after_pop: {len(self.result_faster_whisper)}")
+            log.info("%s", f"len_result_faster_whisper_after_pop: {len(self.result_faster_whisper)}")
             if self.result_faster_whisper is not None and len(self.result_faster_whisper) == 0:
                 self.result_faster_whisper = None
         except Exception:
             pass
 
         try:
-            print(f"len_result_whisperX_alignment_after_pop: {len(self.result_whisperx_aligment)}")
+            log.info("%s", f"len_result_whisperX_alignment_after_pop: {len(self.result_whisperx_aligment)}")
             if self.result_whisperx_aligment is not None and len(self.result_whisperx_aligment) == 0:
                 self.result_whisperx_aligment = None
         except Exception:
             pass
         try:
-            print(f"len_result_whisperX_diarize_after_pop: {len(self.result_whisperx_speaker_diarize)}")
+            log.info("%s", f"len_result_whisperX_diarize_after_pop: {len(self.result_whisperx_speaker_diarize)}")
             if self.result_whisperx_speaker_diarize is not None and len(self.result_whisperx_speaker_diarize) == 0:
                 self.result_whisperx_speaker_diarize = None
         except Exception:
@@ -1696,13 +1664,13 @@ class MainWindows(UIMainWin):
                         temp_dir = os.path.abspath(r"./temp")
                         temp_cmd = temp_dir + "\\" + "*.srt"
                         os.system(f"del {temp_cmd}")
-                        print("cleared temp files")
+                        log.info("%s", "cleared temp files")
                         
                     else:
-                        print("no temp files to clear")
+                        log.info("%s", "no temp files to clear")
 
                 except Exception as e:
-                    print(str(e))
+                    log.error("%s", str(e))
             
             # 如果关键进程仍在运行 结束进程
             if self.transcribe_thread is not None and self.transcribe_thread.is_running:
@@ -1721,12 +1689,9 @@ class MainWindows(UIMainWin):
                 self.demucsWorker.requestInterruption()
                 self.demucsWorker.stop()
             
-            # 退还系统错误输出 和标准输出
-            sys.stderr = sys.__stderr__
-            sys.stdout = sys.__stdout__
-
-            # 关闭日志文件 结束全部流
-            self.log.close()
+            # 结束日志：确保所有缓冲落盘（文件 Handler 由 logging_setup 统一关闭）
+            log.info("程序退出")
+            logging_setup.shutdownLogging()
 
             # TODO:从内存或显存中手动卸除模型时，程序崩溃，该异常与 C++ 2015 运行时环境有关，
             # 尝试替换该运行时库的系统文件，该功能正常运行，但系统不能再正常开机，

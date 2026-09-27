@@ -1,11 +1,15 @@
 # coding:utf-8
 
+import logging
 import os
 from PySide6.QtCore import (QThread, Signal)
 import subprocess
 from .transcribe import secondsToHMS
+from .workers import GuardedWorker
 
-class SplitAudioFileWithSpeakersWorker(QThread):
+log = logging.getLogger(__name__)
+
+class SplitAudioFileWithSpeakersWorker(GuardedWorker):
     # 定义一个信号，用于在处理完成后发送结果
     result_signal = Signal(str)
     current_task_signal = Signal(str)
@@ -50,7 +54,7 @@ class SplitAudioFileWithSpeakersWorker(QThread):
         for result in self.segments_path_info_list:
             segments,path,info = result
             base_path,file = os.path.split(path)
-            print(f"    current task: {file}")
+            log.info("%s", f"    current task: {file}")
 
             self.current_task_signal.emit(file)
 

@@ -3,6 +3,7 @@
 import sys
 import os
 import importlib.util
+import logging
 
 BASE_DIR = os.path.dirname(os.path.abspath( __file__))
 
@@ -38,11 +39,51 @@ if _rocm_spec is not None and _rocm_spec.loader is not None:
     # 此处 stdout 尚未重定向到日志文件，先只取结果，稍后再写入日志
     _ROCm_READY = _rocm_util.setupROCm()
 
+# ---------------------------------------------------------------------------------------------------------------------------
+# 日志引导 —— 必须尽早，理由和上面 ROCm 一样：后面任何一步失败都要有记录
+#
+# 这里同样用 importlib 按文件路径加载，绕开 faster_whisper_GUI/__init__.py
+# （它会 import whisperx -> ctranslate2，那正是我们想观察其失败的对象）。
+# 加载后登记进 sys.modules，后续 `from faster_whisper_GUI.logging_setup import ...`
+# 会复用同一个实例，不会出现「两份模块、两套状态」。
+_logging_spec = importlib.util.spec_from_file_location(
+    "faster_whisper_GUI.logging_setup",
+    os.path.join(BASE_DIR, 'faster_whisper_GUI', 'logging_setup.py'),
+)
+logging_setup = importlib.util.module_from_spec(_logging_spec)
+sys.modules["faster_whisper_GUI.logging_setup"] = logging_setup
+_logging_spec.loader.exec_module(logging_setup)
+
+try:
+    LOG_PATH = logging_setup.setupLogging()
+    logging_setup.installExceptionHooks()   # sys.excepthook + threading.excepthook
+    logging_setup.installOutputStreams()    # print() 从此进入日志管道
+    logging_setup.logEnvironmentSnapshot()
+except BaseException:
+    # 日志系统自己起不来时必须让人看见 —— 否则「为什么没有日志」会变成新的谜题
+    import traceback as _tb
+    _detail = _tb.format_exc()
+    try:
+        with open(os.path.join(BASE_DIR, "logging_setup_error.txt"), "w",
+                  encoding="utf-8") as _fh:
+            _fh.write(_detail)
+    except OSError:
+        pass
+    sys.__stderr__.write(_detail)
+    sys.__stderr__.flush()
+    raise
+
+# 本模块的 logger。必须在下面的 print 之前定义 —— 转换脚本只保证「在最后一个
+# 顶层 import 之后」，而这里后续还有 import，所以显式放在引导块正下方。
+log = logging.getLogger(__name__)
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import (QFont, QPixmap)
 from PySide6.QtWidgets import (QApplication, QSplashScreen, QVBoxLayout)
 
 from qfluentwidgets import ProgressBar
+
+logging_setup.installQtMessageHandler()   # Qt 自己的消息也进日志
 
 class MySplashScreen(QSplashScreen):
     # 鼠标点击事件
@@ -84,50 +125,39 @@ splash.show()
 
 app.processEvents()  # 处理主进程事件
 
-# print输出重定向到文件
-log_f = open('fasterwhispergui.log', 'w', buffering=1)
-sys.stdout = log_f
-sys.stderr = log_f
-
 # ---------------------------------------------------------------------------------------------------------------------------
 # 记录 ROCm 探测结果
 #
-# setupROCm() 在上面的日志重定向之前就执行了（时序要求，不能推迟），
-# 所以它的输出此刻还进不到日志文件里。这里补记状态，方便排查
-# "下拉框里为什么没有 AMD ROCm 选项" 这类问题。
-log_f.write("\n---------- AMD ROCm / HIP ----------")
+# setupROCm() 在日志引导之前就执行了（时序要求，不能推迟），所以它的输出没能进日志。
+# 这里补记状态，方便排查"下拉框里为什么没有 AMD ROCm 选项"这类问题。
+#
+# 这段是本项目日志的范本：状态 / 根因 / 影响 / 排查 —— 一条日志把该说的说全，
+# 用户发一份日志过来就够，不用来回追问环境。
+_rocm_log = logging.getLogger("faster_whisper_GUI.rocm")
+_rocm_log.info("---------- AMD ROCm / HIP ----------")
 if _ROCm_READY:
-    log_f.write(f"\n状态      : 已启用")
-    log_f.write(f"\n根目录    : {_rocm_util.ROCM_ROOT}")
+    _rocm_log.info("状态      : 已启用")
+    _rocm_log.info("根目录    : %s", _rocm_util.ROCM_ROOT)
     for _directory in _rocm_util.ROCM_DLL_DIRECTORIES:
-        log_f.write(f"\nDLL 目录  : {_directory}")
-    log_f.write(f"\nROCBLAS_USE_HIPBLASLT  : {os.environ.get('ROCBLAS_USE_HIPBLASLT')}")
-    log_f.write(f"\nHSA_OVERRIDE_GFX_VERSION: {os.environ.get('HSA_OVERRIDE_GFX_VERSION')}")
-    log_f.write("\n设备下拉框将包含 AMD ROCm (HIP) 选项")
+        _rocm_log.info("DLL 目录  : %s", _directory)
+    _rocm_log.info("ROCBLAS_USE_HIPBLASLT  : %s",
+                   os.environ.get('ROCBLAS_USE_HIPBLASLT'))
+    _rocm_log.info("HSA_OVERRIDE_GFX_VERSION: %s",
+                   os.environ.get('HSA_OVERRIDE_GFX_VERSION'))
+    _rocm_log.info("设备下拉框将包含 AMD ROCm (HIP) 选项")
 else:
-    log_f.write("\n状态      : 未检测到 HIP SDK")
-    log_f.write("\n原因      : 未找到含 amdhip64_7.dll 的 ROCm 目录")
-    log_f.write("\n影响      : 设备下拉框不含 AMD ROCm (HIP) 选项（CPU / NVIDIA 不受影响）")
-    log_f.write("\n排查      : 确认已安装 AMD HIP SDK，或设置环境变量 ROCM_PATH")
-log_f.write("\n-----------------------------------\n")
+    _rocm_log.info("状态      : 未检测到 HIP SDK")
+    _rocm_log.info("原因      : 未找到含 amdhip64_7.dll 的 ROCm 目录")
+    _rocm_log.info("影响      : 设备下拉框不含 AMD ROCm (HIP) 选项（CPU / NVIDIA 不受影响）")
+    _rocm_log.info("排查      : 确认已安装 AMD HIP SDK，或设置环境变量 ROCM_PATH")
+_rocm_log.info("-----------------------------------")
 
 from faster_whisper_GUI.version import __version__
 from faster_whisper_GUI.util import outputWithDateTime
 
-log_f.write(f"\nfaster_whisper_GUI: {__version__}")
+log.info("%s", f"faster_whisper_GUI: {__version__}")
 
 outputWithDateTime("Start")
-
-import logging
-
-# faster_whisper 模块日志
-logger_faster_whisper = logging.getLogger("faster_whisper")
-logger_faster_whisper.setLevel(logging.DEBUG)
-faster_whisper_logger_handler = logging.FileHandler(r"./faster_whisper.log", mode="w")
-faster_whisper_logger_handler.setLevel(logging.DEBUG)
-formatter1 = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s",datefmt='%Y-%m-%d_%H:%M:%S')
-faster_whisper_logger_handler.setFormatter(formatter1)
-logger_faster_whisper.addHandler(faster_whisper_logger_handler)
 
 pb.setValue(10)
 
@@ -174,8 +204,10 @@ if __name__ == "__main__":
     app.installTranslator(translator)
             
     pb.setValue(70)
-    sys.stderr = sys.__stderr__
-    log_f.close()
+    # 注意：这里不再还原/关闭 sys.stderr。
+    # 旧实现在此处关闭了日志文件并把 stdout 留在一个已关闭的对象上，
+    # 之后任何 print 都会抛 "I/O operation on closed file"。
+    # 现在 stdout/stderr 由 logging_setup 的 LoggingStream 一直持有到进程结束。
 
     # splash.showMessage("Load Windows...") #, Qt.AlignmentFlag.AlignBottom | Qt.AlignmentFlag.AlignHCenter, Qt.white)
     

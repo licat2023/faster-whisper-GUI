@@ -2,6 +2,7 @@
 
 # from threading import Thread
 from concurrent import futures
+import logging
 import os
 from typing import List
 import time
@@ -17,6 +18,8 @@ from faster_whisper.transcribe import TranscriptionInfo
 
 import webvtt
 from PySide6.QtCore import (QThread, Signal, QDateTime)
+
+from faster_whisper_GUI.workers import GuardedWorker
 from pyaudio import (PyAudio, paInt16, paInt24)
 import wave
 
@@ -35,8 +38,10 @@ from .util import (
 
 from .config import ENCODING_DICT, Task_list
 
+log = logging.getLogger(__name__)
 
-class AudioStreamTranscribeWorker(QThread):
+
+class AudioStreamTranscribeWorker(GuardedWorker):
     Signal_process_over = Signal()
     def __init__(self
                 , parent = None
@@ -50,7 +55,7 @@ class AudioStreamTranscribeWorker(QThread):
             ) -> None:
         super().__init__(parent)
 
-class CaptureAudioWorker(QThread):
+class CaptureAudioWorker(GuardedWorker):
     Signal_process_over = Signal(np.ndarray)
 
     def __init__(self
@@ -124,7 +129,7 @@ class CaptureAudioWorker(QThread):
     def stop(self):
         self.is_running = False
 
-class OutputWorker(QThread):
+class OutputWorker(GuardedWorker):
     signal_write_over = Signal()
 
     def __init__(self, 
@@ -155,7 +160,7 @@ class OutputWorker(QThread):
 
         # 检查输出目录
         if output_dir != "" and not os.path.exists(output_dir):
-            print(f"\nCreate output dir : {output_dir}")
+            log.info("%s", f"\nCreate output dir : {output_dir}")
             # 给定的输出目录不存在时 创建输出目录
             os.makedirs(output_dir)
         
@@ -168,7 +173,7 @@ class OutputWorker(QThread):
             if self.output_dir == "":
                 output_dir,_ = os.path.split(path)
 
-            print("Output...")
+            log.info("%s", "Output...")
             # 输出到字幕文件
             if output_format.lower() == "all":
                 output_format_ = SUBTITLE_FORMAT
@@ -188,11 +193,11 @@ class OutputWorker(QThread):
                             , aggregate_contents = self.aggregate_contents
                         )
 
-        print("\n【Over】")
+        log.info("%s", "\n【Over】")
         self.signal_write_over.emit()
         self.stop()
 
-class TranscribeWorker(QThread):
+class TranscribeWorker(GuardedWorker):
     signal_process_over = Signal(list)
 
     def __init__(self
@@ -227,7 +232,7 @@ class TranscribeWorker(QThread):
         #     print(f"    ignore File : {file} \n")
         #     return (None, None)
 
-        print("开始处理音频...")
+        log.info("%s", "开始处理音频...")
         segments, info = self.model.transcribe(
                                                 audio=file,
                                                 language=self.parameters["language"],
@@ -269,14 +274,14 @@ class TranscribeWorker(QThread):
         try:
             self.detect_Audio_info(info)
         except Exception as e:
-            print(f"{file} 处理失败!")
-            print(str(e))
+            log.error("%s", f"{file} 处理失败!")
+            log.error("%s", str(e))
             return (None, None)
 
         # segments = list(segments)
         segmentsTranscribe : List[segment_Transcribe] = []
         # 遍历生成器，并获取转写内容
-        print(f"Transcription for {file.split('/')[-1]}")
+        log.info("%s", f"Transcription for {file.split('/')[-1]}")
 
         for segment in segments:
             # 退出进程标识
@@ -285,9 +290,7 @@ class TranscribeWorker(QThread):
                 # self.signal_process_over.emit(self.segments_path_info)
                 return info, None
 
-            print(
-                    f'  [{str(round(segment.start, 5))}s --> {str(round(segment.end, 5))}s] {segment.text.lstrip()}'
-                )
+            log.info("%s", f'  [{str(round(segment.start, 5))}s --> {str(round(segment.end, 5))}s] {segment.text.lstrip()}')
             segmentsTranscribe.append(segment_Transcribe(segment))#.start, segment.end, segment.text))
 
         # if not self.is_running:
@@ -306,9 +309,9 @@ class TranscribeWorker(QThread):
         duration = secondsToHMS(duration).replace(",", ".")
         duration_after_vad = info.duration_after_vad
         duration_after_vad = secondsToHMS(duration_after_vad).replace(",", ".")
-        print(f"  Detected language [{language}] with probability [{language_probability*100:.2f}%]")
-        print(f"  Audio duration     —— [{duration}] ")
-        print(f"  after VAD duration —— [{duration_after_vad}]")
+        log.info("%s", f"  Detected language [{language}] with probability [{language_probability*100:.2f}%]")
+        log.info("%s", f"  Audio duration     —— [{duration}] ")
+        log.info("%s", f"  after VAD duration —— [{duration_after_vad}]")
 
 
     def try_decode_avFile(self, file) -> bool:
@@ -318,9 +321,9 @@ class TranscribeWorker(QThread):
 
         flag = False
 
-        print("\n")
-        print(f"current task: {file}")
-        print("  尝试解析文件")
+        log.info("%s", "\n")
+        log.info("%s", f"current task: {file}")
+        log.info("%s", "  尝试解析文件")
         container = av.open(file, metadata_errors="ignore") # 尝试打开文件      
         av_cont = container.streams
         for stream in av_cont:
@@ -329,47 +332,32 @@ class TranscribeWorker(QThread):
                 break
 
         if not flag:
-            print("  解析失败！目标文件不是有效的音视频文件")
+            log.error("%s", "  解析失败！目标文件不是有效的音视频文件")
             
         container.close()
         return flag
     
     def run(self) -> None:
         """
-        QThread 入口
+        QThread 入口。
 
-        这里必须自己捕获异常：Qt 在自己的事件循环里调用 Python 的 run() 覆写时，
-        若 run() 抛出异常，Qt 只会打印一行 "Error calling Python override of
-        QThread::run():"，**不会输出 traceback**；而本程序的 sys.stderr 又被重定向到了
-        Qt 信号（见 mainWindows.redirectOutput），于是真实的报错信息既进不了日志、
-        也送不到界面 —— 结果就是界面永远停在"正在处理中"，且日志停在最后一行的假象。
+        异常由 GuardedWorker 统一接住（critical + 完整 traceback + 落盘），
+        这里不再自行 try/except，避免两套处理互相遮蔽。
+        """
+        self.runTranscribe()
 
-        因此这里显式捕获并把 traceback 直接写入日志文件（绕过一切重定向）。
+    def onError(self, exc) -> None:
+        """
+        转写线程崩溃时的界面恢复。
+
+        traceback 由 GuardedWorker 统一记录（critical 级别、完整堆栈、直接落盘），
+        这里只负责把界面从「正在处理中」放出来，避免永久卡住。
         """
         try:
-            self.runTranscribe()
-        except Exception:
-            import traceback
-            detail = traceback.format_exc()
-            # 直接写日志文件，不经过 print（print 会被重定向吞掉）
-            try:
-                with open(r"./fasterwhispergui.log", "a", encoding="utf8") as handle:
-                    handle.write("\n!!! 转写线程异常终止 !!!\n")
-                    handle.write(detail)
-                    handle.write("\n")
-            except Exception:
-                pass
-            # 同时尝试送达界面（可能失败，但不影响日志已落盘）
-            try:
-                print(f"转写失败: {detail}")
-            except Exception:
-                pass
-            # 让界面从"正在处理中"状态恢复，而不是永久卡住
-            # 注意 signal_process_over 声明为 Signal(list)，不能发 None
-            try:
-                self.signal_process_over.emit([])
-            except Exception:
-                pass
+            # signal_process_over 声明为 Signal(list)，不能发 None
+            self.signal_process_over.emit([])
+        except Exception:                              # noqa: BLE001
+            log.debug("崩溃后发送 signal_process_over 失败", exc_info=True)
 
     def runTranscribe(self) -> None:
         self.is_running = True
@@ -394,7 +382,7 @@ class TranscribeWorker(QThread):
             if file.split(".")[-1].upper() in SUBTITLE_FORMAT
         ]:
             new_line = "\n              "
-            print(f"ignore files: {new_line.join(ingnore_files)}")
+            log.info("%s", f"ignore files: {new_line.join(ingnore_files)}")
 
         self.segments_path_info = []
         # 在线程池中并发执行相关任务，默认状况下使用单 GPU 该并发线程数为 1 ，
@@ -424,12 +412,12 @@ class TranscribeWorker(QThread):
                 # 保存临时文件
                 temp_output_save_file = getSaveFileName(audioFile=path, format="SRT", rootDir=r"./temp")
                 writeSubtitles(temp_output_save_file, segments=segments, format="SRT",language=info.language, fileName=path)
-                print(f"save temp file: {os.path.abspath(temp_output_save_file)}")
+                log.info("%s", f"save temp file: {os.path.abspath(temp_output_save_file)}")
                 
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
             
-        print("\n【Over】")
+        log.info("%s", "\n【Over】")
         self.signal_process_over.emit(self.segments_path_info)
 
         return
@@ -466,7 +454,7 @@ def writeSubtitles(outputFileName:str,
     elif format == "ASS":
         writeASS(outputFileName, segments, file_code=file_code)
 
-    print(f"write over | {os.path.abspath(outputFileName)}")
+    log.info("%s", f"write over | {os.path.abspath(outputFileName)}")
     
 def writeJson(fileName:str, segments:List[segment_Transcribe], language:str,avFile="", file_code="utf8"):
 

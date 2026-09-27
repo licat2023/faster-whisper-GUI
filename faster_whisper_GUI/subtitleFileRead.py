@@ -1,10 +1,13 @@
 # coding:utf-8
 
+import logging
 import os
 from typing import List
 from .seg_ment import segment_Transcribe
 import json
 from faster_whisper.transcribe import Word
+
+log = logging.getLogger(__name__)
 
 def readJSONFileToSegments(file:str, file_code = "utf8") -> List[segment_Transcribe]:
     
@@ -20,7 +23,7 @@ def readJSONFileToSegments(file:str, file_code = "utf8") -> List[segment_Transcr
                                     ) for subtitle in subtitles_str
                     ]
     except Exception as e:
-        print(f"{str(e)}")
+        log.error("%s", f"{str(e)}")
         segments = [ segment_Transcribe(
                                     start=subtitle["from"], 
                                     end=subtitle["to"], 

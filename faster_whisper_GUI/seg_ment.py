@@ -1,7 +1,10 @@
 # coding:utf-8
 
+import logging
 from faster_whisper.transcribe import Segment, Word
 from typing import List
+
+log = logging.getLogger(__name__)
 
 class segment_Transcribe():
 
@@ -101,7 +104,7 @@ def Removerepetition(result_a):
             # print(start, end)
             start, end = segment['start'], segment['end']
             result_a_c['segments'].append(segment)
-            print(f"  [{start:.2f}s --> {end:.2f}s] {segment['text']}")
+            log.info("%s", f"  [{start:.2f}s --> {end:.2f}s] {segment['text']}")
     
     return result_a_c
 # ---------------------------------------------------------------------------------------------------------------------------
