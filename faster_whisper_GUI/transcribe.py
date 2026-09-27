@@ -335,6 +335,43 @@ class TranscribeWorker(QThread):
         return flag
     
     def run(self) -> None:
+        """
+        QThread 入口
+
+        这里必须自己捕获异常：Qt 在自己的事件循环里调用 Python 的 run() 覆写时，
+        若 run() 抛出异常，Qt 只会打印一行 "Error calling Python override of
+        QThread::run():"，**不会输出 traceback**；而本程序的 sys.stderr 又被重定向到了
+        Qt 信号（见 mainWindows.redirectOutput），于是真实的报错信息既进不了日志、
+        也送不到界面 —— 结果就是界面永远停在"正在处理中"，且日志停在最后一行的假象。
+
+        因此这里显式捕获并把 traceback 直接写入日志文件（绕过一切重定向）。
+        """
+        try:
+            self.runTranscribe()
+        except Exception:
+            import traceback
+            detail = traceback.format_exc()
+            # 直接写日志文件，不经过 print（print 会被重定向吞掉）
+            try:
+                with open(r"./fasterwhispergui.log", "a", encoding="utf8") as handle:
+                    handle.write("\n!!! 转写线程异常终止 !!!\n")
+                    handle.write(detail)
+                    handle.write("\n")
+            except Exception:
+                pass
+            # 同时尝试送达界面（可能失败，但不影响日志已落盘）
+            try:
+                print(f"转写失败: {detail}")
+            except Exception:
+                pass
+            # 让界面从"正在处理中"状态恢复，而不是永久卡住
+            # 注意 signal_process_over 声明为 Signal(list)，不能发 None
+            try:
+                self.signal_process_over.emit([])
+            except Exception:
+                pass
+
+    def runTranscribe(self) -> None:
         self.is_running = True
 
         # 检查临时目录

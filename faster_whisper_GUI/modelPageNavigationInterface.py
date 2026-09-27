@@ -33,13 +33,16 @@ from .style_sheet import StyleSheet
 from .config import (
                     Preciese_list
                     , Model_names
-                    , Device_list
+                    , LEGACY_DEVICE_LIST
+                    , deviceComboItems
                 )
+
+from .util import isROCmAvailable
 
 class ModelNavigationInterface(NavigationBaseInterface):
     def __tr(self, text):
         return QCoreApplication.translate(self.__class__.__name__, text)
-    
+
     def __init__(self, parent=None):
         
         super().__init__(
@@ -49,7 +52,10 @@ class ModelNavigationInterface(NavigationBaseInterface):
                     )
         
         self.model_names = Model_names
-        self.device_list = Device_list
+
+        # 探测到 ROCm/HIP 运行时时才加入 "AMD ROCm" 选项
+        self.device_items = deviceComboItems(include_rocm=isROCmAvailable())
+        self.device_list = [text for text, _ in self.device_items]
         self.preciese_list = Preciese_list
         
         self.setObjectName('modelNavigationInterface')
@@ -59,6 +65,44 @@ class ModelNavigationInterface(NavigationBaseInterface):
 
         self.SignalAndSlotConnect()
     
+    def setDevice(self, device):
+        """
+        设置下拉框选中的设备
+
+        兼容两种配置格式：
+          - 新格式：实际设备名，如 "cpu" / "cuda" / "auto"（ROCm 与 CUDA 共用 "cuda"）
+          - 旧格式：下拉框索引整数，如 0 / 1 / 2（旧顺序见 config.LEGACY_DEVICE_LIST）
+
+        若配置中的设备在当前下拉框中不存在（例如配置里选了 ROCm，但本次启动未探测到 HIP SDK），
+        则回退到 "auto"，避免静默选中一个并非用户所选的设备。
+        """
+        device_combox = self.device_combox
+
+        if isinstance(device, str):
+            # 按实际设备值匹配
+            # 注意 "cuda" 可能同时对应 "cuda" 与 "AMD ROCm (HIP)" 两项，findData 返回先出现的普通 cuda
+            index = device_combox.findData(device)
+            if index >= 0:
+                device_combox.setCurrentIndex(index)
+                return
+            print(f"[Device] 配置中的设备 {device!r} 当前不可用，回退到 auto")
+            fallback = device_combox.findData("auto")
+            device_combox.setCurrentIndex(fallback if fallback >= 0 else 1)
+            return
+
+        # 旧格式：索引。先按旧顺序映射，映射不到再按当前列表长度夹取
+        if isinstance(device, int):
+            if 0 <= device < len(LEGACY_DEVICE_LIST):
+                index = device_combox.findData(LEGACY_DEVICE_LIST[device])
+                if index >= 0:
+                    device_combox.setCurrentIndex(index)
+                    return
+            device_combox.setCurrentIndex(device if 0 <= device < device_combox.count() else 1)
+            return
+
+        print(f"[Device] 无法识别的 device 配置: {device!r}，回退到默认")
+        device_combox.setCurrentIndex(1)
+
     def SignalAndSlotConnect(self):
         self.model_local_RadioButton.clicked.connect(self.setModelLocationLayout)
         self.model_online_RadioButton.clicked.connect(self.setModelLocationLayout)
@@ -178,8 +222,17 @@ class ModelNavigationInterface(NavigationBaseInterface):
         # ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------
         # 设备
         device_combox  = ComboBox()
-        device_combox.addItems(self.device_list)
+        for device_text, device_value in self.device_items:
+            # 显示文本与「传给 CTranslate2 的实际设备名」分离：
+            # "AMD ROCm (HIP)" 显示给用户看，实际值是 "cuda"（HIP 后端沿用 CUDA 的 API 命名）
+            device_combox.addItem(self.__tr(device_text), userData=device_value)
         device_combox.setCurrentIndex(1)
+        device_combox.setToolTip(self.__tr(
+            "选择运行语音识别的设备。\n"
+            "cpu：使用 CPU\n"
+            "cuda：使用 NVIDIA CUDA\n"
+            "auto：自动选择\n"
+            "AMD ROCm (HIP)：使用 AMD 显卡，需要已安装 HIP SDK"))
         self.device_combox = device_combox
         
         self.paramItemWidget_device = ParamWidget(self.__tr("处理设备"), self.__tr("选择运行语音识别的设备。"), device_combox)
@@ -293,7 +346,7 @@ class ModelNavigationInterface(NavigationBaseInterface):
         self.combox_online_model.setCurrentIndex(param["modelName"])
 
         self.switchButton_use_v3.setChecked(param["use_v3_model"])
-        self.device_combox.setCurrentIndex(param["device"])
+        self.setDevice(param["device"])
         self.LineEdit_device_index.setText(param["deviceIndex"])
         self.preciese_combox.setCurrentIndex(param["preciese"])
         self.LineEdit_cpu_threads.setText(param["thread_num"])
@@ -308,7 +361,8 @@ class ModelNavigationInterface(NavigationBaseInterface):
         param["model_path"] = self.lineEdit_model_path.text()
         param["modelName"] = self.combox_online_model.currentIndex()
         param["use_v3_model"] = self.switchButton_use_v3.isChecked()
-        param["device"] = self.device_combox.currentIndex()
+        # 保存「实际设备名」而非下拉框索引：新增/隐藏设备选项时不会让旧配置错位
+        param["device"] = self.device_combox.currentData()
         param["deviceIndex"] = self.LineEdit_device_index.text().strip()
         param["preciese"] = self.preciese_combox.currentIndex()
         param["thread_num"] = self.LineEdit_cpu_threads.text().strip()

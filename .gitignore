@@ -181,3 +181,13 @@ cython_debug/
 #  and can be added to the global gitignore or merged into this file.  For a more nuclear
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
+
+# 本地验证产物（基准脚本、抓取到的网页、HIP 编译试验），不纳入版本控制
+.probe/
+.crw/
+.hip-verify/
+
+# 日志与配置备份（运行时产物）
+logs/
+*.log
+fasterWhisperGUIConfig.json.bak-*

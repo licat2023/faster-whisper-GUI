@@ -191,6 +191,19 @@ class MainWindows(UIMainWin):
         # 重定向输出
         sys.stdout = RedirectOutputSignalStore()
         sys.stdout.outputSignal.connect(target)
+        # 同时写一份到日志文件
+        #
+        # 原因：outputSignal 是跨线程投递的，需要主线程事件循环来派发。若主线程忙于其它事情，
+        # 这些输出就不会被送达（GUI 文本框看起来是空的），日志里也完全没有记录，导致
+        # "程序到底是在跑还是卡住了" 无法判断。这里额外直连日志，保证输出一定会落盘。
+        sys.stdout.outputSignal.connect(self.writeToLogFile, Qt.ConnectionType.DirectConnection)
+
+    def writeToLogFile(self, text: str):
+        """把重定向的输出直接写入日志文件（绕过跨线程信号投递的时序问题）"""
+        try:
+            self.log.write(text)
+        except Exception:
+            pass
 
     # ==============================================================================================================
 
@@ -257,7 +270,12 @@ class MainWindows(UIMainWin):
             model_size_or_path = self.page_model.lineEdit_model_path.text()
         else:
             model_size_or_path = self.page_model.combox_online_model.currentText()
-        device: str = self.page_model.device_combox.currentText()
+        # 取下拉框的 userData（设备值），而非显示文本。
+        # "AMD ROCm (HIP)" 选项的值为 "rocm"，但 CTranslate2 的 HIP 后端沿用 CUDA 的 API 命名，
+        # 实际必须传 "cuda"，所以在这里做一次映射。
+        device: str = self.page_model.device_combox.currentData()
+        if device == "rocm":
+            device = "cuda"
         device_index:str = self.page_model.LineEdit_device_index.text().replace(" ", "")
         device_index = [int(index) for index in device_index.split(",")]
         if len(device_index) == 1:
@@ -878,7 +896,9 @@ class MainWindows(UIMainWin):
         speech_pad_ms = int(self.page_VAD.LineEdit_VAD_param_speech_pad_ms.text().replace(" ", ""))
 
         VAD_param["param"] = VADParameters()
-        VAD_param["param"]["onset"] = onset
+        # 注意：faster-whisper 1.x 已把该参数由 "onset" 改名为 "threshold"
+        # （VADParameters 里定义的字段名也是 threshold，这里必须保持一致）
+        VAD_param["param"]["threshold"] = onset
         VAD_param["param"]["min_speech_duration_ms"] = min_speech_duration_ms
         VAD_param["param"]["max_speech_duration_s"] = max_speech_duration_s
         VAD_param["param"]["min_silence_duration_ms"] = min_silence_duration_ms

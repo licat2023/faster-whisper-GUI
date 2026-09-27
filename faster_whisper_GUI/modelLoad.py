@@ -55,7 +55,20 @@ class LoadModelWorker(QThread):
         if self.use_v3_model:
             # 修正 V3 模型的 mel 滤波器组参数
             print("\n[Using V3 model, modify  number of mel-filters to 128]")
-            self.model.feature_extractor.mel_filters = self.model.feature_extractor.get_mel_filters(self.model.feature_extractor.sampling_rate, self.model.feature_extractor.n_fft, n_mels=128)
+            #
+            # 注意 .astype("float32") 不能省。
+            # get_mel_filters() 内部用 numpy 默认精度计算，返回的是 float64；而 FeatureExtractor
+            # 的构造函数里是 "get_mel_filters(...).astype('float32')"，即官方途径会转成 float32。
+            # 直接赋值会让 mel_filters 变成 float64，进而使 log_mel_spectrogram 产出的特征也是
+            # float64，最终在 ctranslate2.StorageView.from_array() 处报：
+            #     ValueError: Unsupported type: <f8
+            # 该错误只在 use_v3_model=True（V3 模型）时出现，与设备（CPU/GPU）无关。
+            _feature_extractor = self.model.feature_extractor
+            self.model.feature_extractor.mel_filters = _feature_extractor.get_mel_filters(
+                _feature_extractor.sampling_rate,
+                _feature_extractor.n_fft,
+                n_mels=128,
+            ).astype("float32")
 
         self.isRunning = False
         # return self.model
