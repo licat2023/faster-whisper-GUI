@@ -33,7 +33,6 @@ from qfluentwidgets import (
                         )
 
 from faster_whisper.transcribe import TranscriptionInfo
-from faster_whisper.transcribe import Word
 
 import torch
 
@@ -104,6 +103,12 @@ STREAM_CHUNK_SECONDS = 30.0
 class MainWindows(UIMainWin):
     """C"""
 
+    #: 日志 → 界面文本框的投递通道。
+    #: logging 的回调是在「发日志的那个线程」里被同步调用的（转写线程、Demucs 线程、
+    #: whisperx 线程都会写日志），而 QTextEdit 只能由界面线程操作。改走信号投递后，
+    #: Qt 会在跨线程时自动排队到界面线程、同线程时直接调用，两种情况都安全。
+    signal_guiLog = Signal(str)
+
     def __tr(self, text):
         return QCoreApplication.translate(self.__class__.__name__, text)
 
@@ -117,8 +122,11 @@ class MainWindows(UIMainWin):
         logging_setup.installOutputStreams()
 
         self._guiHandler = None
+        self._guiLogTarget = None
 
         super().__init__()
+
+        self.signal_guiLog.connect(self.setTextAndMoveCursorToProcessBrowser)
 
         self.outputWithDateTime = outputWithDateTime
 
@@ -193,9 +201,24 @@ class MainWindows(UIMainWin):
         文件那一份由 logging 的 FileHandler 直接写盘，不受界面影响；
         这里只是额外挂一个出口。旧实现把 sys.stdout 换成一个 Qt 信号对象，
         结果是「信号没派发出去 = 日志里也什么都没有」，排查时最难办的正是这种状态。
+
+        注意线程：logging 的回调是在发日志的那个线程里被同步调用的，而 target 是
+        界面槽。旧实现把 target 直接交给 logging，等于从工作线程操作 QTextEdit。
+        现在统一 emit signal_guiLog，由 Qt 决定直连还是排队投递。
         """
         logging_setup.detachHandler(self._guiHandler)
-        self._guiHandler = logging_setup.attachGuiHandler(target)
+
+        # 调用点每次都传同一个槽；重复 connect 会让一条日志投递多次，所以换目标时先断开
+        if target is not self._guiLogTarget:
+            if self._guiLogTarget is not None:
+                try:
+                    self.signal_guiLog.disconnect(self._guiLogTarget)
+                except (RuntimeError, TypeError):
+                    log.debug("断开旧的日志界面出口失败", exc_info=True)
+            self.signal_guiLog.connect(target)
+            self._guiLogTarget = target
+
+        self._guiHandler = logging_setup.attachGuiHandler(self.signal_guiLog.emit)
 
     # ==============================================================================================================
 
@@ -512,8 +535,10 @@ class MainWindows(UIMainWin):
         
     def cancelTrancribe(self):
         log.info("%s", "Canceling...")
+        # 取消只走 stop()（置 is_running=False，Worker 循环协作退出）。
+        # 原先还调了 requestInterruption()，但没人读 isInterruptionRequested()，
+        # 属于给人错觉的死调用，已移除（见 closeEvent 里的同一处说明）。
         self.transcribe_thread.stop()
-        self.transcribe_thread.requestInterruption()
         self.raiseErrorInfoBar(title=self.__tr("取消"),content=self.__tr("操作已被用户取消"))
         log.info("%s", "【Process Canceled By User!】")
         self.resetButton_process()
@@ -657,41 +682,40 @@ class MainWindows(UIMainWin):
 
     def simplifiedAndTraditionalChineseConvert(self, segments, language):
         # 設置轉換器
-                    if language == "Auto" or language == "zhs":
-                        log.info("%s", f"convert to Simplified Chinese")
-                        log.info("%s", f"len:{len(segments)}")
-                        cc = opencc.OpenCC('t2s')
+        #
+        # 只有 "Auto" / "zhs" / "zht" 三种取值有对应的转换方向。旧实现在其它取值下
+        # 会让 cc 保持未绑定，随后的 cc.convert() 抛 UnboundLocalError —— 而调用点
+        # （transcribeOver）没有 try/except，于是「音频识别为中文、但用户在转写参数页
+        # 选的是粤语等其它语言」这一组合会直接打断转写结果展示。这里显式跳过并记日志。
+        if language == "Auto" or language == "zhs":
+            log.info("%s", "convert to Simplified Chinese")
+            log.info("%s", f"len:{len(segments)}")
+            cc = opencc.OpenCC('t2s')
 
-                        # for segment in segment_:
-                            # new_text = cc.convert(segment.text)
-                            # print(f"[{segment.text} --> {new_text}]")
-                            # segment.text = new_text
-                            # print(f"len_words: {len(segment.words)}")
-                            # if len(segment.words) > 0:
-                            #     for word in segment.words:
-                            #         new_word = cc.convert(word.word)
-                            #         print(f"    {word.word} --> {new_word}")
-                            #         word.word = new_word
-                    elif language == "zht":
-                        log.info("%s", f"convert to Traditional Chinese")
-                        log.info("%s", f"len:{len(segments)}")
-                        cc = opencc.OpenCC('s2t')
+        elif language == "zht":
+            log.info("%s", "convert to Traditional Chinese")
+            log.info("%s", f"len:{len(segments)}")
+            cc = opencc.OpenCC('s2t')
 
-                    # 轉換簡繁
-                    for segment in segments:
-                        
-                        new_text = cc.convert(segment.text)
-                        # print(f"[{segment.text} --> {new_text}]")
-                        segment.text = new_text
-                        # print(f"len_words: {len(segment.words)}")
-                        if len(segment.words) > 0:
-                            
-                            for word in segment.words:
-                                new_word = cc.convert(word.word)
-                                # print(f"    {word.word} --> {new_word}")
-                                
-                                word = Word(word.start,word.end,new_word,word.probability)
-                                # word.word = new_word
+        else:
+            log.warning("语言 %r 没有简繁转换方向，跳过简繁转换", language)
+            return
+
+        # 轉換簡繁
+        for segment in segments:
+
+            new_text = cc.convert(segment.text)
+            segment.text = new_text
+
+            if len(segment.words) > 0:
+
+                for word in segment.words:
+                    new_word = cc.convert(word.word)
+                    # 原先写作 word = Word(word.start, word.end, new_word, ...)：
+                    # 那只是把循环变量重绑到一个新对象上，既没有写回原对象，也不影响
+                    # segment.words 里的元素 —— 词级文本实际上从未被转换（正确写法被
+                    # 注释在下一行）。faster_whisper 的 Word 是可变对象，直接改字段。
+                    word.word = new_word
 
     def transcribeOver(self, segments_path_info:list):
         # self.button_process.clicked.disconnect(self.cancelTrancribe)
@@ -1030,7 +1054,10 @@ class MainWindows(UIMainWin):
             try:
                 page.setModelStatusLabelText(status)
             except Exception as e:
-                pass
+                # 原先这里是裸 pass，与 docs/LOGGING.md「绝不静默吞异常」相冲突：
+                # 某个页面刷新状态失败时，界面没提示、日志里也没有记录。
+                log.warning("页面 %s 刷新模型状态标签失败: %s",
+                            page.objectName(), e, exc_info=True)
     
     def getLocalModelPath(self):
         """
@@ -1133,12 +1160,17 @@ class MainWindows(UIMainWin):
 
         if self.whisperXWorker is None:
             self.whisperXWorker = WhisperXWorker(self.current_result, alignment=True, speaker_diarize=False, parent=self)
+            self.whisperXWorker.stateToolRequest.connect(self.setStateTool)
         else:
-            self.whisperXWorker.result_segments_path_info = self.current_result
+            # 原先这里赋值给 result_segments_path_info —— 那是 run() 内部用来收集
+            # 「输出」的属性（每次 run() 开头都会被重置成空列表），而 run() 读取的是
+            # segments_path_info。于是第二次点「时间戳对齐」时，实际处理的是上一次
+            # 遗留的旧结果，本次选中的转写结果被完全忽略。
+            self.whisperXWorker.segments_path_info = self.current_result
             self.whisperXWorker.alignment = True
             self.whisperXWorker.speaker_diarize = False
         
-        self.whisperXWorker.signal_process_over.connect(self.aligmentOver)
+        self._connectWhisperXFinished(self.aligmentOver)
         self.whisperXWorker.start()
 
     def whisperXDiarizeSpeakers(self):
@@ -1175,6 +1207,7 @@ class MainWindows(UIMainWin):
                                                 , max_speaker=whisperParams["max_speaker"]
                                                 , parent=self
                                             )
+            self.whisperXWorker.stateToolRequest.connect(self.setStateTool)
 
         else:
             self.whisperXWorker.segments_path_info = result_needed
@@ -1183,14 +1216,25 @@ class MainWindows(UIMainWin):
             self.whisperXWorker.use_auth_token = whisperParams['use_auth_token']
             self.whisperXWorker.min_speaker = whisperParams['min_speaker']
             self.whisperXWorker.max_speaker = whisperParams['max_speaker']
-            try:
-                self.whisperXWorker.signal_process_over.disconnect(self.aligmentOver)
-            except Exception as e:
-                pass
 
-        self.whisperXWorker.signal_process_over.connect(self.speakerDiarizeOver)
+        self._connectWhisperXFinished(self.speakerDiarizeOver)
         self.setStateTool(title=self.__tr("WhisperX"), text=self.__tr("声源分离"), status=False)
         self.whisperXWorker.start()
+    
+    def _connectWhisperXFinished(self, slot):
+        """
+        保证 whisperXWorker.signal_process_over 只连到本次要用的那个结束回调。
+
+        旧实现只在「说话人分离」分支里断开 aligmentOver，「时间戳对齐」分支从不断开；
+        而两个结束回调开头都会调用 setPageOutButtonStatus() —— 那是把按钮可用状态取反
+        的操作，重复连接会让状态被翻转两次，回到错误的那一侧。
+        """
+        for candidate in (self.aligmentOver, self.speakerDiarizeOver):
+            try:
+                self.whisperXWorker.signal_process_over.disconnect(candidate)
+            except (RuntimeError, TypeError):
+                pass        # 本来就没连上
+        self.whisperXWorker.signal_process_over.connect(slot)
     
     def setPageOutButtonStatus(self):
         self.page_output.WhisperXAligmentTimeStampleButton.setEnabled(not self.page_output.WhisperXAligmentTimeStampleButton.isEnabled())
@@ -1435,7 +1479,7 @@ class MainWindows(UIMainWin):
 
             self.outputWithDateTime("Cancel Demucs")
             self.page_demucs.process_button.setEnabled(False)
-            self.demucsWorker.requestInterruption()
+            # 取消只走 stop()，理由见 closeEvent 里的说明
             self.demucsWorker.stop()
 
             while(self.demucsWorker.isRunning()):
@@ -1664,8 +1708,11 @@ class MainWindows(UIMainWin):
             self.raiseInfoBar(self.__tr("加载配置文件成功"), self.__tr("配置文件已加载:\n") + config_file_name)
 
         except Exception as e:
-            self.raiseErrorBar(self.__tr("加载配置文件失败"), self.__tr("配置文件加载失败:\n") + str(e))
-            log.error("%s", str(e))
+            # 原先这里调用 self.raiseErrorBar(...)，但该方法在本类里从未定义
+            # （只有 raiseErrorInfoBar / raiseSuccessInfoBar / raiseInfoBar）——
+            # 于是 except 里又抛 AttributeError，把真正的失败原因盖掉。
+            log.error("加载配置文件失败: %s", e, exc_info=True)
+            self.raiseErrorInfoBar(self.__tr("加载配置文件失败"), self.__tr("配置文件加载失败:\n") + str(e))
 
         # 根据读取的配置设置完控件状态之后，根据控件状态设置相关属性
         # self.page_output.tableTab.onDisplayModeChanged(self.page_output.tableTab.closeDisplayModeComboBox.currentIndex())
@@ -1758,20 +1805,21 @@ class MainWindows(UIMainWin):
                     log.error("%s", str(e))
             
             # 如果关键进程仍在运行 结束进程
+            #
+            # 取消只有一条生效路径：stop() 把 Worker 的 is_running 置 False，循环里
+            # 协作退出。原先每处都还调了 requestInterruption()，但全仓库没有任何地方
+            # 读 isInterruptionRequested()，而 Qt 的中断标志不会被 start() 复位 ——
+            # 对会被复用的 Worker（Demucs / WhisperX）反而可能在下次运行时误判。
             if self.transcribe_thread is not None and self.transcribe_thread.is_running:
-                self.transcribe_thread.requestInterruption()
                 self.transcribe_thread.stop()
             
             if self.whisperXWorker is not None and self.whisperXWorker.is_running:
-                self.whisperXWorker.requestInterruption()
                 self.whisperXWorker.stop()
             
             if self.outputWorker is not None and self.outputWorker.is_running:
-                self.outputWorker.requestInterruption()
                 self.outputWorker.stop()
             
             if self.demucsWorker is not None and self.demucsWorker.is_running:
-                self.demucsWorker.requestInterruption()
                 self.demucsWorker.stop()
             
             # 结束日志：确保所有缓冲落盘（文件 Handler 由 logging_setup 统一关闭）

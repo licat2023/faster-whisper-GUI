@@ -191,3 +191,9 @@ cython_debug/
 logs/
 *.log
 fasterWhisperGUIConfig.json.bak-*
+
+# 运行时配置本体：程序退出时会把「设置」页的全部内容（含 HuggingFace 令牌）
+# 写回这个文件。它绝不能进版本库 —— 历史上正是它把令牌带进了 git
+# （见 commit af782f0 / d6b2ff8）。缺文件时程序会退回默认值，见
+# UI_MainWindows.readConfigJson()。
+fasterWhisperGUIConfig.json

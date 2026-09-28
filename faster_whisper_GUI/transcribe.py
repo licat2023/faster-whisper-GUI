@@ -994,7 +994,11 @@ def writeASS(fileName:str, segments, file_code="UTF-8"):
         f.write("\n[Events]\n")
         f.write("Format: Layer, Start, End, Style, Actor, MarginL, MarginR, MarginV, Effect, Text\n")
         for segment in segments:
-            f.write(f'Dialogue: 0,{secondsToHMS(segment.start).replace(",",".")[:-1]},{secondsToHMS(segment.end).replace(",",".")[:-1]},fwgDefault,{segment.speaker},0000,0000,0000,,{segment.text}\n')
+            # segment_Transcribe 始终带 speaker 字段，但 writeSubtitles 也会处理从
+            # 外部读入（SRT/JSON）或由 whisperx 转换来的结果；用 getattr 兜底，
+            # 避免因为缺一个字段在整个导出环节抛 AttributeError。
+            speaker = getattr(segment, "speaker", None) or ""
+            f.write(f'Dialogue: 0,{secondsToHMS(segment.start).replace(",",".")[:-1]},{secondsToHMS(segment.end).replace(",",".")[:-1]},fwgDefault,{speaker},0000,0000,0000,,{segment.text}\n')
 
 
 def getSaveFileName(audioFile: str, format:str = "srt", rootDir:str = ""):

@@ -83,6 +83,15 @@ def load_model(whisper_arch,
         "word_timestamps": False,
         "prepend_punctuations": "\"'“¿([{-",
         "append_punctuations": "\"'.。,，!！?？:：”)]}、",
+        # faster-whisper 1.2.1 的 TranscriptionOptions 有 26 个必填字段，而这份
+        # 内嵌代码停留在 21 个，于是 TranscriptionOptions(**...) 会抛
+        # TypeError: missing 5 required positional arguments。补齐这 5 项，
+        # 取值与 faster-whisper 自身的默认语义一致。
+        "multilingual": False,
+        "max_new_tokens": None,
+        "clip_timestamps": "0",
+        "hallucination_silence_threshold": None,
+        "hotwords": None,
         "suppress_numerals": False,
     }
 

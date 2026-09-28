@@ -1,10 +1,50 @@
+import inspect
+import logging
+from typing import Optional, Union
+
 import numpy as np
 import pandas as pd
 from pyannote.audio import Pipeline
-from typing import Optional, Union
 import torch
 
 from .audio import load_audio, SAMPLE_RATE
+
+log = logging.getLogger(__name__)
+
+
+def _load_pipeline(model_name, token, cache_dir):
+    """
+    加载 pyannote 流水线，兼容令牌参数在 3.x / 4.x 之间的改名。
+
+    pyannote.audio 4.0 起 Pipeline.from_pretrained 的 use_auth_token 被改名为 token，
+    传旧名字会直接 TypeError: unexpected keyword argument 'use_auth_token' —— 而本方法
+    的调用方（DiarizationPipeline）正好传的是旧名字，于是说话人分离必然失败。
+    这里按签名探测，两个版本都能跑。
+    """
+    kwargs = {"cache_dir": cache_dir}
+
+    if not token:
+        # 该仓库在 HuggingFace 上是 gated 的：没有令牌必然拿不到权重。
+        # 直接说清楚，比让 pyannote 抛一个难懂的网络/鉴权错误更有用。
+        log.warning("未提供 HuggingFace 令牌，%s 是 gated 仓库，加载很可能失败"
+                    "（设置页「HuggingFace用户令牌」可填写）", model_name)
+        return Pipeline.from_pretrained(model_name, **kwargs)
+
+    parameters = inspect.signature(Pipeline.from_pretrained).parameters
+    if "use_auth_token" in parameters and "token" not in parameters:
+        # pyannote.audio 3.x：只有旧名字
+        return Pipeline.from_pretrained(model_name, use_auth_token=token, **kwargs)
+
+    # pyannote.audio 4.x 用 token；签名里以 **kwargs 透传的版本也走这里，
+    # 万一新名字不被接受则回退到旧名字。
+    try:
+        return Pipeline.from_pretrained(model_name, token=token, **kwargs)
+    except TypeError as error:
+        if "token" not in str(error):
+            raise
+        log.debug("pyannote 不接受 token 参数，回退到 use_auth_token", exc_info=True)
+        return Pipeline.from_pretrained(model_name, use_auth_token=token, **kwargs)
+
 
 class DiarizationPipeline:
     def __init__(
@@ -16,13 +56,12 @@ class DiarizationPipeline:
     ):
         if isinstance(device, str):
             device = torch.device(device)
-        self.model = Pipeline.from_pretrained(model_name, use_auth_token=use_auth_token, cache_dir=cache_dir)# .to(device)
+        self.model = _load_pipeline(model_name, use_auth_token, cache_dir)  # .to(device)
         if self.model:
             try:
                 self.model = self.model.to(device)
-            except Exception as e:
-                print("Move Model To Device Error: \n",str(e))
-                pass
+            except Exception as error:
+                log.warning("声纹模型搬到 %s 失败，将在原设备上运行: %s", device, error)
 
     def __call__(self, audio: Union[str, np.ndarray], min_speakers=None, max_speakers=None):
         if isinstance(audio, str):

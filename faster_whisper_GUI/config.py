@@ -1,5 +1,22 @@
 # coding:utf-8
-default_Huggingface_user_token = ""
+
+import os
+
+# ---------------------------------------------------------------------------------------------------------------------------
+# HuggingFace 令牌
+#
+# 这里原本硬编码着一个真实令牌（hf_…）。它会被写进 fasterWhisperGUIConfig.json，
+# 而那个文件是随仓库提交的 —— 等于把凭据公开。现在改成只从环境变量读取：
+#
+#     set FASTER_WHISPER_GUI_HF_TOKEN=hf_xxxxx        (Windows cmd)
+#     $env:FASTER_WHISPER_GUI_HF_TOKEN = "hf_xxxxx"   (PowerShell)
+#
+# 或者直接在「设置」页的「HuggingFace用户令牌」里填（只存进本地配置文件）。
+#
+# 注意：已提交过的旧令牌必须视为已泄露 —— 请到 HuggingFace 后台吊销并重新签发，
+# 因为从工作区删除它并不能把它从 git 历史里抹掉。
+# ---------------------------------------------------------------------------------------------------------------------------
+default_Huggingface_user_token = os.environ.get("FASTER_WHISPER_GUI_HF_TOKEN", "")
 
 Language_without_space = ["ja","zh","ko","yue"]
 Language_dict = {

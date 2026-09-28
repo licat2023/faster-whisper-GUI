@@ -57,12 +57,16 @@ def dictionaryListToSegmentList(dict_result:List[dict]) -> List[segment_Transcri
                 try:
                     start=word['start']
                     end=word['end']
+                    # 概率必须在 word 被重绑成字符串之前取出来。
+                    # 原先写作 probability=['score'] —— 那是把字符串 'score' 塞进一个
+                    # 列表当作概率值，于是 whisperX 链路产出的词级分数全是错的
+                    # （JSON 字幕里 words[].probability 会变成 ["score"]）。
+                    probability = word.get('score', 0.0)
                     word=word['word']
-                    probability=['score']
                     word_ = Word(start=start, end=end, word=word, probability=probability)
                 except KeyError:
                     # 无时间戳的情况下只添加字幕数据 不修改其他数据
-                    probability=['score']
+                    probability=0.0
                     word=word['word']
                     word_ = Word(start, end, word=word, probability=probability)
                 words_.append(word_)

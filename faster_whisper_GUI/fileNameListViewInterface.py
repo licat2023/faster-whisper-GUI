@@ -45,6 +45,12 @@ class FileNameListView(QWidget):
     
     ignore_files_signal = Signal(ignore_files_info)
 
+    #: 工作线程 → 界面线程：(可用文件列表, 这些文件的父目录, 被忽略文件的说明)。
+    #: 过滤要逐个 av.open 探测音轨，比较慢，所以放在线程里做；但 QStringListModel
+    #: 只能由界面线程写，因此线程只负责 emit 这个信号，落地交给
+    #: _applyFilteredFileNames。
+    fileNamesReady = Signal(list, str, list)
+
     def __init__(self, parent) -> None:
         super().__init__(parent=parent)
 
@@ -68,7 +74,15 @@ class FileNameListView(QWidget):
         # 设置接受文件拖放
         self.setAcceptDrops(True)
 
-    def testFileExitedAndNotSubtitle(self, fileNameList) -> list[str]:
+    def testFileExitedAndNotSubtitle(self, fileNameList) -> tuple[list[str], list]:
+        """
+        剔除不存在的文件与字幕文件。
+
+        返回 (可用文件列表, 被忽略文件的说明列表)。这里不直接发信号 —— 本方法会被
+        工作线程调用，而信号的接收者是界面槽；与其依赖跨线程投递语义，不如把说明
+        带回界面线程再发（见 _applyFilteredFileNames）。
+        """
+        ignored_infos = []
         files_exist = [os.path.exists(file) for file in fileNameList]
 
         if not all(files_exist):
@@ -81,7 +95,7 @@ class FileNameListView(QWidget):
             fileNameList = [file for file in fileNameList if os.path.exists(file)]
 
             ifi = ignore_files_info(ignore_files=ignore_file, ignore_reason=self.__tr("存在无效文件，已剔除"))
-            self.ignore_files_signal.emit(ifi)
+            ignored_infos.append(ifi)
 
             # TODO: self.parent().parent().parent().parent().parent() is monkey code , 
             # it should be replaced by a signal-slot system
@@ -103,7 +117,7 @@ class FileNameListView(QWidget):
             log.info("%s", f"ignore files: {new_line.join(ignore_files)}")
 
             ifi = ignore_files_info(ignore_files=ignore_files,ignore_reason=self.__tr("已知的字幕格式文件已忽略："))
-            self.ignore_files_signal.emit(ifi)
+            ignored_infos.append(ifi)
             # TODO: self.parent().parent().parent().parent().parent() is monkey code , 
             # it should be replaced by a signal-slot system
             # InfoBar.info(
@@ -116,7 +130,7 @@ class FileNameListView(QWidget):
             # )
             # print(self.parent().parent().parent().parent().parent())
 
-        return files
+        return files, ignored_infos
 
     def addFileNamesToListWidget(self):
 
@@ -124,12 +138,19 @@ class FileNameListView(QWidget):
         
         if fileNames is None or len(fileNames) == 0:
             return
-        thread_: Thread = Thread(target=self.setFileNameListToDataModel, args=(fileNames,),daemon=True)
+        # 过滤要逐个 av.open 探测音轨，比较慢，放线程里做。
+        # 线程只做纯 I/O 并 emit fileNamesReady；列表模型由界面线程的
+        # _applyFilteredFileNames 更新 —— 旧实现让线程直接改 QStringListModel。
+        thread_: Thread = Thread(target=self._filterFileNamesAndEmit, args=(fileNames,), daemon=True)
         thread_.start()
-        # self.setFileNameListToDataModel(fileNames)
     
-    def testFileWithAudioTrackOrNot(self, fileNames:list[str]) -> list[str]:
-        
+    def testFileWithAudioTrackOrNot(self, fileNames:list[str]) -> tuple[list[str], list]:
+        """
+        用 PyAV 探测每个文件是否含音频流，返回 (含音频流的文件, 被忽略文件的说明)。
+
+        与 testFileExitedAndNotSubtitle 一样，只做 I/O、不发信号（可能被工作线程调用）。
+        """
+        ignored_infos = []
         fileNames_ = []
         ignoreFile = []
         for fileName in fileNames:
@@ -158,7 +179,7 @@ class FileNameListView(QWidget):
                 
         if len(ignoreFile) > 0:
             ifi = ignore_files_info(ignore_files=ignoreFile, ignore_reason=self.__tr("不包含音频流的文件将被忽略："))
-            self.ignore_files_signal.emit(ifi)
+            ignored_infos.append(ifi)
 
         # TODO: monkey code
         # if len(ignoreFile) > 0:
@@ -170,15 +191,44 @@ class FileNameListView(QWidget):
         #             , parent=self.parent().parent().parent().parent().parent() 
         #         )    
 
-        return fileNames_
+        return fileNames_, ignored_infos
 
+
+    def filterFileNames(self, fileNames) -> tuple[list[str], str, list]:
+        """
+        纯 I/O 过滤：剔除不存在的文件、字幕文件、不含音频流的文件。
+
+        不触碰任何 Qt 对象，可以安全地在工作线程里调用；被忽略文件的说明一并返回，
+        由界面线程负责发信号。
+        """
+        if not fileNames:
+            return [], "", []
+
+        baseDir, _ = os.path.split(fileNames[0])
+        fileNames, infos_1 = self.testFileExitedAndNotSubtitle(fileNames)
+        fileNames, infos_2 = self.testFileWithAudioTrackOrNot(fileNames)
+        return fileNames, baseDir, infos_1 + infos_2
+
+    def _filterFileNamesAndEmit(self, fileNames) -> None:
+        """工作线程入口：只做过滤，结果通过 fileNamesReady 回到界面线程。"""
+        self.fileNamesReady.emit(*self.filterFileNames(fileNames))
 
     def setFileNameListToDataModel(self, fileNames)->None:
-        baseDir, _ = os.path.split(fileNames[0])
-        self.avDataRootDir = baseDir
+        """同步入口：拖放与 Ctrl+V 都发生在界面线程，直接过滤并落地。"""
+        self._applyFilteredFileNames(*self.filterFileNames(fileNames))
 
-        fileNames = self.testFileExitedAndNotSubtitle(fileNames)
-        fileNames = self.testFileWithAudioTrackOrNot(fileNames)
+    def _applyFilteredFileNames(self, fileNames, baseDir, ignored_infos)->None:
+        """
+        把过滤后的文件名写入列表模型 —— 只允许在界面线程执行。
+
+        既可能来自同步入口，也可能来自 fileNamesReady 信号（跨线程时 Qt 自动排队到
+        界面线程）。旧实现是让工作线程直接调用 setFileNameListToDataModel，等于跨线程
+        改 QStringListModel，属未定义行为。
+        """
+        for info in ignored_infos:
+            self.ignore_files_signal.emit(info)
+
+        self.avDataRootDir = baseDir
 
         file_ignored = []
         self.avFileList = self.FileNameModle.stringList()
@@ -286,6 +336,8 @@ class FileNameListView(QWidget):
         self.addFileButton.clicked.connect(self.addFileNamesToListWidget)
         self.removeFileButton.clicked.connect(self.removeFileNameFromListWidget)
         self.clearFilesButton.clicked.connect( self.clearFileNameListWidget)
+        # 跨线程投递：过滤线程发信号，界面线程更新列表模型
+        self.fileNamesReady.connect(self._applyFilteredFileNames)
     
     # ===========================================================================================================
     def dragEnterEvent(self, event: QDragEnterEvent):

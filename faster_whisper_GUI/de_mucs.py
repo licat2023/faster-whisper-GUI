@@ -178,7 +178,10 @@ class DemucsWorker(GuardedWorker):
     
         gc.collect()
 
-        self.requestInterruption()
+        # 这里原先是 self.requestInterruption() + self.stop()。requestInterruption()
+        # 设的是 Qt 的中断标志，而全仓库没有任何地方读 isInterruptionRequested()；
+        # 更麻烦的是 DemucsWorker 实例会被复用（demucsProcess 只改属性不重建），
+        # 标志一旦置上就不会被 start() 复位。取消统一走 stop()。
         self.stop()
 
     

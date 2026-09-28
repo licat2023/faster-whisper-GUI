@@ -19,6 +19,12 @@ log = logging.getLogger(__name__)
 class WhisperXWorker(GuardedWorker):
     signal_process_over = Signal(list)
 
+    #: 请求界面更新状态提示：(文本, 是否结束)。
+    #: setStateTool() 是在 Worker 线程里被调用的，不能直接碰 QWidget —— 旧实现走
+    #: self.parent().setStateTool(...)，等于从工作线程操作 StateToolTip。改成发信号，
+    #: 由 MainWindows 在界面线程里执行（跨线程时 Qt 自动排队）。
+    stateToolRequest = Signal(str, bool)
+
     def __init__(
                 self
                 , segments_path_info:list
@@ -210,10 +216,14 @@ class WhisperXWorker(GuardedWorker):
 
 
     def setStateTool(self, text:str , status:bool=False):
-        try:
-            self.parent().setStateTool(text=text,status=status)
-        except Exception as e:
-            log.error("%s", f"To set StateTool Error: {e}")
+        """
+        请求界面更新状态提示。
+
+        只发信号，不直接调用父窗口 —— 见 stateToolRequest 的说明。
+        没有接收者时信号是安全的空操作（旧实现在父窗口不是 MainWindows 时会
+        吞掉异常并打一行错误日志）。
+        """
+        self.stateToolRequest.emit(text, status)
 
 
 

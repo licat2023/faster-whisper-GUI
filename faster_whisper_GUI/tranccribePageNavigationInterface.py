@@ -1,6 +1,8 @@
 # coding:utf-8
 
+import logging
 import os
+
 from PySide6.QtCore import QCoreApplication, Qt
 from PySide6.QtWidgets import (
                                 QCompleter,
@@ -29,6 +31,8 @@ from .util import outputWithDateTime, WhisperParameters
 from .style_sheet import StyleSheet
 
 from .paramItemWidget import ParamWidget
+
+log = logging.getLogger(__name__)
 
 
 class TranscribeNavigationInterface(NavigationBaseInterface):
@@ -682,8 +686,10 @@ class TranscribeNavigationInterface(NavigationBaseInterface):
             self.LineEdit_language_detection_threshold.setText(Transcribe_params["language_detection_threshold"])
             self.lienEdit_language_detection_segments.setText(Transcribe_params["language_detection_segments"])
             self.switchButton_multilingual.setChecked(Transcribe_params["multilingual"])
-        except:
-            pass
+        except Exception as e:
+            # 裸 except + pass：旧配置文件里缺这几个后加的键时，界面会悄悄少设一批
+            # 控件，用户只看到「参数没生效」而查不到原因（docs/LOGGING.md 禁止静默吞异常）。
+            log.warning("读取转写参数失败，以下控件保持默认值: %s", e, exc_info=True)
 
     def getParam(self) -> dict:
         Transcribe_params = WhisperParameters()

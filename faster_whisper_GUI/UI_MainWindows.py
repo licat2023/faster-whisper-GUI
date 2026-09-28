@@ -72,9 +72,6 @@ from .settingPageNavigation import SettingPageNavigationInterface
 
 log = logging.getLogger(__name__)
 
-class aa(QWidget):
-    def __init__(self, parent: QWidget | None = ..., f: Qt.WindowType = ...) -> None:
-        super().__init__(parent, f)
 # =======================================================================================
 # UI
 # =======================================================================================
@@ -85,6 +82,15 @@ class UIMainWin(FramelessMainWindow):
     #     return QCoreApplication.translate(self.__class__.__name__, text)
         
     def readConfigJson(self, config_file_path: str = ""):
+        """
+        读取配置文件；缺失或损坏时退回全默认值。
+
+        这里必须容错，原因有两个：
+         1. 该文件是程序退出时自己写的运行时状态（见 MainWindows.saveConfig），
+            不该被视为"必须随源码分发"的资源；
+         2. 旧实现直接 open()，文件不存在就抛 FileNotFoundError，而调用点没有
+            try/except —— 新克隆 / 刚清空配置的用户会**启动即崩**。
+        """
         self.default_theme = "light"
         self.model_param = {}
         self.setting = {}
@@ -92,48 +98,43 @@ class UIMainWin(FramelessMainWindow):
         self.Transcription_param = {}
         self.output_whisperX_param = {}
         self.vad_param = {}
+        self.use_auth_token_speaker_diarition = ""
 
         if not config_file_path:
             return
-        
-        self.use_auth_token_speaker_diarition= ""
-        with open(os.path.abspath(config_file_path),"r", encoding="utf8") as fp:
-            json_data = json.load(fp)
 
-            try:
-                self.default_theme = json_data["theme"]
-            except:
-                self.default_theme = "light"
-            
-            try:
-                self.model_param = json_data["model_param"]
-            except:
-                self.model_param = {}
+        config_path = os.path.abspath(config_file_path)
+        try:
+            with open(config_path, "r", encoding="utf8") as fp:
+                json_data = json.load(fp)
+        except FileNotFoundError:
+            log.info("配置文件不存在，使用默认设置: %s", config_path)
+            return
+        except (OSError, ValueError) as error:
+            log.warning("配置文件无法读取或 JSON 解析失败，使用默认设置: %s (%s)",
+                        config_path, error)
+            return
 
-            try:
-                self.setting = json_data["setting"]
-            except:
-                self.setting = {}
+        if not isinstance(json_data, dict):
+            log.warning("配置文件顶层不是对象，使用默认设置: %s", config_path)
+            return
 
-            try:
-                self.demucs = json_data["demucs"]
-            except:
-                self.demucs = {}
+        # 各配置节独立容错：某一节缺失/为 null 只影响它自己，不再整体失败。
+        # 旧实现对每一节各写一个 bare except，既丢掉了出错信息，也让"缺了哪一节"
+        # 变得不可见；这里用 get + 空值兜底，语义相同但可读、可日志。
+        self.default_theme = json_data.get("theme") or "light"
+        self.model_param = json_data.get("model_param") or {}
+        self.setting = json_data.get("setting") or {}
+        self.demucs = json_data.get("demucs") or {}
+        self.Transcription_param = json_data.get("Transcription_param") or {}
+        self.output_whisperX_param = json_data.get("output_whisperX") or {}
+        self.vad_param = json_data.get("vad_param") or {}
 
-            try:
-                self.Transcription_param = json_data["Transcription_param"]
-            except:
-                self.Transcription_param = {}
-
-            try:
-                self.output_whisperX_param = json_data["output_whisperX"]
-            except:
-                self.output_whisperX_param = {}
-
-            try:
-                self.vad_param = json_data["vad_param"]
-            except:
-                self.vad_param = {}
+        missing = [name for name in ("theme", "model_param", "setting", "demucs",
+                                     "Transcription_param", "output_whisperX", "vad_param")
+                   if not json_data.get(name)]
+        if missing:
+            log.info("配置文件缺少以下配置节，将使用默认值: %s", ", ".join(missing))
 
 
     def setConfig(self):

@@ -296,8 +296,10 @@ class SettingPageNavigationInterface(ScrollArea):
             self.colorPickerButton.setColor(param["themeColor"])
             self.setThemeColorAndText()
             # setThemeColor(param["themeColor"])
-        except:
-            pass
+        except Exception as e:
+            # 裸 except + pass 会让「配置文件某个字段不对」变成查不出来的静默失败，
+            # 与 docs/LOGGING.md「绝不静默吞异常」相冲突。
+            log.warning("读取设置页配置失败，相关控件保持默认值: %s", e, exc_info=True)
     
     def getParam(self):
         param = {}
