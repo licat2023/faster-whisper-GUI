@@ -187,8 +187,13 @@ class AudioStreamTranscribeWorker(GuardedWorker):
             if seg.words:
                 words = [_dcReplace(w, start=w.start + offset, end=w.end + offset)
                          for w in seg.words]
-            out.append(_dcReplace(seg, start=seg.start + offset, end=seg.end + offset,
-                                  words=words))
+            shifted = _dcReplace(seg, start=seg.start + offset, end=seg.end + offset,
+                                 words=words)
+            # 普通文件转写会把 faster-whisper 的原生 Segment 包装成
+            # segment_Transcribe；实时转写也必须维持同一数据契约。
+            # 原生 Segment 没有 speaker 字段，直接交给结果表、JSON 导出或
+            # 说话人音频分割都会触发 AttributeError。
+            out.append(segment_Transcribe(shifted))
         return out
 
     def _transcribeChunk(self, audio: np.ndarray, offset: float) -> list:

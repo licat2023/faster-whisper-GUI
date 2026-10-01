@@ -2,8 +2,10 @@
 
 import logging
 import os
-from PySide6.QtCore import (QThread, Signal)
 import subprocess
+
+from PySide6.QtCore import Signal
+
 from .transcribe import secondsToHMS
 from .workers import GuardedWorker
 
@@ -27,17 +29,18 @@ class SplitAudioFileWithSpeakersWorker(GuardedWorker):
     def creatCommandLine(self, start_time, end_time, fileName, output_path, speaker):
 
         output_fileName = self.getOutPutFileName(output_path, start_time, end_time, speaker)
-        # print(output_fileName)
-        commandLine = []
-        commandLine.append("ffmpeg")
-        commandLine.append("-i")
-        commandLine.append(fileName)
-        commandLine.append("-ss")
-        commandLine.append(start_time)
-        commandLine.append("-to")
-        commandLine.append(end_time)
-        commandLine.append(output_fileName)
-        return commandLine
+        return [
+            "ffmpeg",
+            "-y",
+            "-nostdin",
+            "-i",
+            fileName,
+            "-ss",
+            start_time,
+            "-to",
+            end_time,
+            output_fileName,
+        ]
     
     def getOutPutFileName(self, output_path:str, start_time:str, end_time:str, speaker:str):
         fileName = ""
@@ -52,8 +55,8 @@ class SplitAudioFileWithSpeakersWorker(GuardedWorker):
         self.is_running = True
 
         for result in self.segments_path_info_list:
-            segments,path,info = result
-            base_path,file = os.path.split(path)
+            segments, path, _info = result
+            base_path, file = os.path.split(path)
             log.info("%s", f"    current task: {file}")
 
             self.current_task_signal.emit(file)
@@ -69,40 +72,66 @@ class SplitAudioFileWithSpeakersWorker(GuardedWorker):
             # 检查输出路径
             if not os.path.exists(output_path):
                 os.makedirs(output_path)
-            
-            # 数据标注文件
-            list_file = open(f"{output_path + '/' + '00_list.csv'}","w",encoding="utf8")
-            # 格式：vocal_path|speaker_name|language|text
-            list_file.write("vocal_path,    speaker_name,    language,    text\n")
 
-            for segment in segments:
-                # if not segment.speaker : continue
-                
-                start_time = secondsToHMS(segment.start).replace(',','.')
-                end_time = secondsToHMS(segment.end).replace(',','.')
-                speaker = segment.speaker
+            # 每个输入文件有自己的标注文件；即使列表为空也能安全关闭。
+            list_path = os.path.join(output_path, "00_list.csv")
+            with open(list_path, "w", encoding="utf8") as list_file:
+                # 格式：vocal_path,speaker_name,language,text
+                list_file.write("vocal_path,    speaker_name,    language,    text\n")
 
-                if speaker is None or speaker == "":
-                    speaker = "UnKnownSpeaker"
+                for segment in segments:
+                    start_time = secondsToHMS(segment.start).replace(',', '.')
+                    end_time = secondsToHMS(segment.end).replace(',', '.')
+                    speaker = segment.speaker
 
-                commandLine = self.creatCommandLine(start_time,end_time,path,output_path,speaker)
-                
-                # print(commandLine)
-                temp_process = subprocess.Popen(commandLine, shell=False, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, encoding="utf-8", text=True,
-                                                creationflags=subprocess.CREATE_NO_WINDOW)
-                temp_process.wait()
+                    if speaker is None or speaker == "":
+                        speaker = "UnKnownSpeaker"
 
-                # 获取并整理文件名
-                output_fileName = self.getOutPutFileName(output_path, start_time, end_time, speaker)
-                output_fileName = output_fileName.replace('\\','/')
+                    commandLine = self.creatCommandLine(
+                        start_time, end_time, path, output_path, speaker
+                    )
+                    completed = subprocess.run(
+                        commandLine,
+                        shell=False,
+                        stdout=subprocess.DEVNULL,
+                        stderr=subprocess.PIPE,
+                        encoding="utf-8",
+                        errors="replace",
+                        text=True,
+                        creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+                        check=False,
+                    )
+                    if completed.returncode != 0:
+                        details = (completed.stderr or "").strip()
+                        log.error(
+                            "ffmpeg 分割失败（退出码 %s）：%s",
+                            completed.returncode,
+                            details or "未返回错误信息",
+                        )
+                        raise subprocess.CalledProcessError(
+                            completed.returncode,
+                            commandLine,
+                            stderr=completed.stderr,
+                        )
 
-                # 输出标注信息
-                list_file.write(f"{output_fileName},{speaker},{self.language},{segment.text.strip().replace(',',' ')}\n")
+                    # 获取并整理文件名
+                    output_fileName = self.getOutPutFileName(
+                        output_path, start_time, end_time, speaker
+                    )
+                    output_fileName = output_fileName.replace('\\', '/')
 
-        list_file.close()
+                    # 输出标注信息
+                    text = segment.text.strip().replace(',', ' ')
+                    list_file.write(
+                        f"{output_fileName},{speaker},{self.language},{text}\n"
+                    )
+
         # 完成后发送结果信号
         result = "over"
         self.result_signal.emit(result)
+        self.stop()
+
+    def onError(self, exc):
         self.stop()
 
     def stop(self):

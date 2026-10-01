@@ -434,6 +434,49 @@ def t_f8b():
     return "缺 speaker 字段不再 AttributeError，Dialogue 行正常写出"
 
 
+def t_f9():
+    """实时转写结果必须与普通文件转写使用相同的数据结构。"""
+    from faster_whisper.transcribe import Segment, Word
+    from PySide6.QtCore import Qt
+
+    from faster_whisper_GUI.seg_ment import segment_Transcribe
+    from faster_whisper_GUI.tableModel_segments_path_info import TableModel
+    from faster_whisper_GUI.transcribe import AudioStreamTranscribeWorker, writeJson
+
+    source = Segment(
+        id=0,
+        seek=0,
+        start=0.25,
+        end=1.0,
+        text=" hello",
+        tokens=[1],
+        avg_logprob=-0.1,
+        compression_ratio=1.0,
+        no_speech_prob=0.0,
+        words=[Word(start=0.25, end=1.0, word=" hello", probability=0.9)],
+        temperature=0.0,
+    )
+    worker = AudioStreamTranscribeWorker()
+    shifted = worker._shiftSegments([source], 2.0)
+
+    assert len(shifted) == 1
+    result = shifted[0]
+    assert isinstance(result, segment_Transcribe), type(result)
+    assert result.speaker is None
+    assert result.start == 2.25 and result.end == 3.0
+    assert result.words[0].start == 2.25 and result.words[0].end == 3.0
+
+    # 复现真实崩溃路径：结果表说话人列和 JSON 导出都必须能直接消费它。
+    model = TableModel(shifted)
+    assert model.data(model.index(0, 2), Qt.ItemDataRole.DisplayRole) == ""
+    with tempfile.TemporaryDirectory() as tmp:
+        path = os.path.join(tmp, "stream.json")
+        writeJson(path, shifted, "en", "stream.wav")
+        assert os.path.exists(path)
+
+    return "实时 Segment 已归一化；表格显示与 JSON 导出均可消费"
+
+
 # =========================================================================== TK
 def t_token():
     import subprocess
@@ -478,6 +521,7 @@ def main():
     check("F5 静默吞异常", t_f5)
     check("F8a seg_ment 词级概率", t_f8a)
     check("F8b writeASS 字段兜底", t_f8b)
+    check("F9 实时转写 Segment 归一化", t_f9)
 
     print()
     print("=== 4. 跨线程与界面状态 ===")
