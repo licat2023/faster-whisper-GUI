@@ -97,7 +97,7 @@ Qt 消息  ─┘                          ├→ FileHandler  fw-*.log     (仅
 
 `print()` 由 `LoggingStream` 在**流**这一层接管，因此天然正确处理多参数、`sep`、
 `end` 以及第三方库直接 `write()` 的情况。调用点也已脚本化改写为带级别的
-`log.info/...`（见 `tools/convert_prints.py`）。
+`log.info/...`（一次性迁移脚本已归档，见 [清理记录](CLEANUP.md)）。
 
 ---
 
@@ -139,20 +139,19 @@ Qt 消息  ─┘                          ├→ FileHandler  fw-*.log     (仅
 
 | 文件 | 职责 |
 |---|---|
-| `faster_whisper_GUI/logging_setup.py` | 日志目录、Handler、异常钩子、Qt 消息、环境快照、诊断包 |
-| `faster_whisper_GUI/workers.py` | `GuardedWorker`：所有 QThread 的异常护栏 |
-| `FasterWhisperGUI.py` | 启动引导：**必须早于任何 `faster_whisper_GUI` 导入** |
-| `tools/check_logging.py` | 日志系统自检（34 项） |
-| `tools/check_workers.py` | 护栏自检 |
-| `tools/convert_prints.py` | `print()` → `log.xxx()` 的 AST 改写脚本 |
+| `src/faster_whisper_GUI/logging_setup.py` | 日志目录、Handler、异常钩子、Qt 消息、环境快照、诊断包 |
+| `src/faster_whisper_GUI/tasks/base.py` | `GuardedWorker`：所有 QThread 的异常护栏 |
+| `src/faster_whisper_GUI/app.py` | 启动引导：推理依赖加载前初始化日志 |
+| `src/project_tools/check_logging.py` | 日志系统自检（34 项） |
+| `src/project_tools/check_workers.py` | 护栏自检 |
 
 ### 一个必须知道的坑
 
-`logging_setup` 会被加载成**两份模块实例**：`FasterWhisperGUI.py` 为了抢在
-`ctranslate2` 之前建立日志，是**按文件路径**加载的；包内其它模块走**普通导入**。
+当前应用使用普通导入加载 `logging_setup`。测试或外部诊断工具按文件路径加载时，
+仍可能产生两份模块实例，因此继续保留进程级幂等保护。
 
 两份实例各自的 `_configured` 都是 `False`，第二次 `setupLogging()` 会用
 `mode="w"` 把刚写好的日志清空（**实测发生过**：启动日志先有 177 字节，随后变 0）。
 
 因此「已配置」状态挂在 **root logger 的属性**上（进程内唯一），而不是模块变量。
-`tools/check_logging.py` 第 11 组测试专门守着这一点。
+`src/project_tools/check_logging.py` 第 11 组测试专门守着这一点。

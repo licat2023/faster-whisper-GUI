@@ -619,7 +619,7 @@ wheels = [
 [[package]]
 name = "faster-whisper-gui"
 version = "0.8.5"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "av" },
     { name = "ctranslate2" },

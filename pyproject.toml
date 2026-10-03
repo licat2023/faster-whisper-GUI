@@ -3,7 +3,7 @@
 #
 #  常用命令：
 #      uv sync --extra rocm          # 安装/更新环境（含 AMD ROCm 版 torch）
-#      uv run FasterWhisperGUI.py    # 用本项目环境运行
+#      uv run python -m faster_whisper_GUI    # 用本项目环境运行
 #
 #  本文件取代了旧的 requirements.txt。旧文件里的版本（faster-whisper 0.10.0、
 #  torch 1.13.1+cu117、CTranslate2>=3.21.0）早已与真实环境不符，照它装必然失败。
@@ -74,10 +74,25 @@ dependencies = [
 # 换用其它 AMD GPU 时，把 gfx1103 改成对应架构，例如 gfx1100 / gfx1101 / gfx1200。
 rocm = ["torch[device-gfx1103]"]
 
+[project.gui-scripts]
+faster-whisper-gui = "faster_whisper_GUI.app:main"
+
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["faster_whisper_GUI*", "whisperx*", "resource*", "project_tools*"]
+namespaces = false
+
+[tool.setuptools.package-data]
+whisperx = ["assets/*.npz"]
+resource = ["**/*.qrc", "**/*.qss", "**/*.png", "**/*.jpg", "**/*.jpeg", "**/*.ico", "**/*.svg", "**/*.qm", "**/*.ts"]
+
 [tool.uv]
-# 这是一个应用（application），不是要发布/安装的库，
-# uv 不需要构建本项目自身。
-package = false
+# 将 src 中的应用以可编辑方式安装；模块入口和工具脚本可直接导入它。
+package = true
 
 # AMD 的 ROCm torch 与 rocm-sdk-* 全是 nightly 预发布版，必须允许预发布，
 # 否则传递依赖里的 rocm==10.2.0a… 解析不出来。

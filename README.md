@@ -2,6 +2,11 @@
 
     faster-whisper、whisperX，GUI with PySide6
 
+开发与维护请先阅读 [项目结构与模块职责](docs/ARCHITECTURE.md)。应用源码位于 `src/`，实现按 `ui`、
+`tasks`、`transcription`、`subtitles`、`domain` 和 `runtime` 分组。内部维护工具位于 `src/`，启动和安装脚本位于项目根目录。也可用 `uv run python -m faster_whisper_GUI` 启动。
+字节码缓存与历史文件去向见 [工作区清理说明](docs/CLEANUP.md)。
+多后端入口、原生流式录音、Qwen 时间戳字幕与 Roformer 分离的使用说明和验收结果见 [GUI 多后端工作流](docs/GUI_BACKENDS.md)。
+
 - ## Installation (uv-managed)
 
   Dependencies are declared in `pyproject.toml` and pinned in `uv.lock`
@@ -38,7 +43,7 @@
     ```powershell
     .\启动GUI.bat
     # or
-    uv run FasterWhisperGUI.py
+    uv run python -m faster_whisper_GUI
     ```
 
   - **Changing dependencies** — edit `pyproject.toml`, then `uv lock`.
@@ -47,7 +52,7 @@
 
   > The ROCm `ctranslate2.dll` is built from CTranslate2 `v4.8.2` source and must
   > stay version-matched with the `ctranslate2` package. Do not bump
-  > `ctranslate2` without rebuilding the DLL — see `.probe/FEASIBILITY.md`.
+  > `ctranslate2` without rebuilding the DLL — see `docs/runtime/ROCM_BUILD.md`.
 
 - ## model download
 

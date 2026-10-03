@@ -8,7 +8,7 @@ REM    2. Intel oneAPI installed (provides dnnl for the ROCm ctranslate2.dll)
 REM    3. Dependencies installed via setup.ps1 (uv-managed: pyproject.toml + uv.lock)
 REM
 REM  ROCm environment variables and DLL directories are configured
-REM  automatically inside FasterWhisperGUI.py - nothing to set here.
+REM  automatically inside the application runtime - nothing to set here.
 REM
 REM  NOTE: This file must keep CRLF line endings. cmd.exe mis-parses
 REM        LF-only batch files (comments get split and executed).
@@ -33,10 +33,12 @@ if not exist ".venv\Scripts\python.exe" (
 
 REM ffmpeg: prefer the bundled copy, otherwise rely on PATH
 if exist "ffmpeg\bin" (
-    set "PATH=%~dp0ffmpeg\bin;%PATH%"
+    set "PATH=%CD%\ffmpeg\bin;%PATH%"
 )
 
 echo Starting faster-whisper-GUI ...
-".venv\Scripts\python.exe" "FasterWhisperGUI.py" %*
+set "PYTHONPATH=%CD%\src;%PYTHONPATH%"
+set "PYTHONPYCACHEPREFIX=%CD%\.cache\pycache"
+".venv\Scripts\python.exe" -m faster_whisper_GUI %*
 
 endlocal
