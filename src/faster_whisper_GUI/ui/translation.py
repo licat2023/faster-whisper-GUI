@@ -5,17 +5,13 @@ from PySide6.QtCore import QTranslator
 from resource import rc_Translater
 import locale
 
-import json
+from faster_whisper_GUI.runtime.preferences import ConfigError, load_config
 
 log = logging.getLogger(__name__)
 
 try:
-    from faster_whisper_GUI.runtime.paths import PROJECT_ROOT
-    with (PROJECT_ROOT / "fasterWhisperGUIConfig.json").open(encoding="utf-8") as fp:
-        config_json = json.load(fp)
-    language_config = config_json["setting"]["language"]
-except (OSError, ValueError, KeyError, TypeError):
-    log.debug("界面语言配置不可用，使用系统语言", exc_info=True)
+    language_config = load_config().get('settings', {}).get('language', 2)
+except ConfigError:
     language_config = 2
 
 if language_config == 0:

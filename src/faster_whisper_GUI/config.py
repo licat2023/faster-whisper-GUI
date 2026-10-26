@@ -2,20 +2,7 @@
 
 import os
 
-# ---------------------------------------------------------------------------------------------------------------------------
-# HuggingFace 令牌
-#
-# 这里原本硬编码着一个真实令牌（hf_…）。它会被写进 fasterWhisperGUIConfig.json，
-# 而那个文件是随仓库提交的 —— 等于把凭据公开。现在改成只从环境变量读取：
-#
-#     set FASTER_WHISPER_GUI_HF_TOKEN=hf_xxxxx        (Windows cmd)
-#     $env:FASTER_WHISPER_GUI_HF_TOKEN = "hf_xxxxx"   (PowerShell)
-#
-# 或者直接在「设置」页的「HuggingFace用户令牌」里填（只存进本地配置文件）。
-#
-# 注意：已提交过的旧令牌必须视为已泄露 —— 请到 HuggingFace 后台吊销并重新签发，
-# 因为从工作区删除它并不能把它从 git 历史里抹掉。
-# ---------------------------------------------------------------------------------------------------------------------------
+# Hugging Face 令牌可由环境变量提供，或通过设置页保存到本地配置。
 default_Huggingface_user_token = os.environ.get("FASTER_WHISPER_GUI_HF_TOKEN", "")
 
 Language_without_space = ["ja","zh","ko","yue"]
@@ -176,12 +163,9 @@ DEVICE_LIST = [
     # 两者最终传给 CTranslate2 的都是 "cuda"（见下方说明），但必须用不同的值，
     # 否则 getParam() 存下 "cuda"、setDevice() 用 findData("cuda") 又只能匹配到第一项
     # （普通的 cuda），导致用户选了 AMD ROCm 后重启界面却显示回 "cuda"。
-    # 真正的映射在 mainWindows.getParam_model() 里完成：rocm -> cuda
+    # 推理参数在 ui/window/parameters.py 中完成 rocm -> cuda 映射。
     {"text": "AMD ROCm (HIP)", "value": "rocm", "require_rocm": True},
 ]
-
-# 旧版本配置文件中 device 字段保存的是下拉框索引，此处保留旧顺序用于迁移
-LEGACY_DEVICE_LIST = ["cpu", "cuda", "auto"]
 
 
 def deviceComboItems(include_rocm: bool = False):
@@ -203,7 +187,7 @@ def deviceComboTexts(include_rocm: bool = False):
     return [text for text, _ in deviceComboItems(include_rocm)]
 
 
-# 兼容旧代码中对 Device_list 的引用（不含 ROCm）
+# 不含 ROCm 的默认设备显示文本。
 Device_list = deviceComboTexts(include_rocm=False)
 
 STR_BOOL = {"False" : False, "True" : True}

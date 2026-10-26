@@ -619,17 +619,12 @@ class TranscribeNavigationInterface(NavigationBaseInterface):
     #     )
 
     def setParam(self, Transcribe_params:dict) -> None:
-        language_text = Transcribe_params.get("languageText")
         Transcribe_params = {**self.getParam(), **Transcribe_params}
         self.backend_options.restore(Transcribe_params.get('backend_options', {}))
 
         self.switchButton_aggregate_contents_according_to_the_speaker.setChecked(Transcribe_params["aggregate_contents"])
 
-        if language_text is not None:
-            self.combox_language.setText(language_text)
-        else:
-            self.combox_language.setCurrentIndex(Transcribe_params["language"])
-        # Transcribe_params["language"] = language_index
+        self.combox_language.setText(Transcribe_params["languageText"])
 
         self.switchButton_Translate_to_English.setChecked(Transcribe_params["task"])
         # Transcribe_params["task"] = task
@@ -720,8 +715,6 @@ class TranscribeNavigationInterface(NavigationBaseInterface):
 
         Transcribe_params["aggregate_contents"] = self.switchButton_aggregate_contents_according_to_the_speaker.isChecked()
         
-        language = self.combox_language.currentIndex()
-        Transcribe_params["language"] = language
         Transcribe_params["languageText"] = self.combox_language.currentText()
         
 

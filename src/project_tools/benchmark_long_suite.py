@@ -23,8 +23,9 @@ jobs = [
 
 def main():
     REPORTS.mkdir(parents=True, exist_ok=True)
-    config = json.loads((ROOT / "fasterWhisperGUIConfig.json").read_text(encoding="utf-8-sig"))
-    configured_model = config["model_param"]["model_path"]
+    from faster_whisper_GUI.runtime.preferences import load_config
+    config = load_config()
+    configured_model = config["model"]["model_path"]
     results = []
     for name, environment, script, arguments in jobs:
         python = ROOT / (f".cache/experiments/{environment}-env/Scripts/python.exe" if environment else ".venv/Scripts/python.exe")

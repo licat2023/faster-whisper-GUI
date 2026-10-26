@@ -10,6 +10,7 @@ import sys
 import subprocess
 import time
 import unittest
+from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT / 'src'))
@@ -20,6 +21,8 @@ DEST = ROOT / '.cache/checks/startup-fixed'
 DEST.mkdir(parents=True, exist_ok=True)
 logging_setup.resolveLogDir = lambda: DEST
 logging_setup.pruneOldRuns = lambda *args, **kwargs: []
+with patch('faster_whisper_GUI.runtime.preferences.load_config', return_value={}):
+    from faster_whisper_GUI.ui import translation
 from faster_whisper_GUI.ui.window.main import MainWindows
 from faster_whisper_GUI.ui.window.view import UIMainWin
 from PySide6.QtCore import QEventLoop, QTimer
@@ -29,8 +32,8 @@ from qfluentwidgets import setTheme, Theme
 
 
 class Window(MainWindows):
-    def readConfigJson(self, *args):
-        UIMainWin.readConfigJson(self, '')
+    def readConfig(self, *args):
+        return UIMainWin.readConfig(self)
 
     def onModelLoadClicked(self):
         if not getattr(self, '_booting', True):

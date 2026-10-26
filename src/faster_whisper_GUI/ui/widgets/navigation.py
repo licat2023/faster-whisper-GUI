@@ -127,7 +127,7 @@ class ToolBar(QWidget):
         self.questionButton.setToolTip(self.tr('关于'))
         self.openDirButton.setToolTip(self.tr("打开主目录"))
 
-        self.themeButton.clicked.connect(lambda: toggleTheme(True,True))
+        self.themeButton.clicked.connect(lambda: toggleTheme(save=False, lazy=True))
         # self.supportButton.clicked.connect(signalBus.supportSignal)
         # self.documentButton.clicked.connect(
         #     lambda: QDesktopServices.openUrl(QUrl(HELP_URL)))

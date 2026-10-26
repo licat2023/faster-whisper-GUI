@@ -250,12 +250,11 @@ def t_f5():
 
     setting_page = SettingPageNavigationInterface(parent_setting)
     try:
-        setting_page.setParam({})            # 必然 KeyError
+        setting_page.setParam({})
     except Exception as exc:                 # noqa: BLE001
         raise AssertionError(f"设置页异常泄漏到调用方: {type(exc).__name__}: {exc}") from exc
 
-    # 用页面自己产出的参数字典，不依赖 fasterWhisperGUIConfig.json ——
-    # 该文件已移出版本库，全新克隆里并不存在。
+    # 使用控件快照，不读取用户配置。
     transcribe_page = TranscribeNavigationInterface(parent_transcribe)
     params = transcribe_page.getParam()      # 自洽：键集与 setParam 完全对应
     transcribe_page.setParam(params)         # 正常路径
@@ -509,15 +508,15 @@ def t_token():
         "默认值没有改成从环境变量读取"
 
     # 运行时配置不该进版本库 —— 这才是防止再次泄露的根本。
-    # 旧实现把它纳入了 git，而程序退出时会把（含令牌的）设置写回去。
     tracked = subprocess.run(["git", "ls-files", "--error-unmatch",
-                              "fasterWhisperGUIConfig.json"],
+                              "config/config.yml"],
                              cwd=REPO_ROOT, capture_output=True, text=True)
-    assert tracked.returncode != 0, "fasterWhisperGUIConfig.json 仍被 git 跟踪"
+    assert tracked.returncode != 0, "config/config.yml 仍被 git 跟踪"
 
-    ignore_text = io.open(os.path.join(REPO_ROOT, ".gitignore"), encoding="utf8").read()
-    assert "fasterWhisperGUIConfig.json" in ignore_text, ".gitignore 未忽略该配置文件"
-    return "令牌改由环境变量提供；运行时配置文件已移出版本库并被忽略"
+    ignored = subprocess.run(["git", "check-ignore", "--quiet", "config/config.yml"],
+                             cwd=REPO_ROOT)
+    assert ignored.returncode == 0, ".gitignore 未忽略该配置文件"
+    return "令牌支持环境变量；本地 YAML 配置被 Git 忽略"
 
 
 # --------------------------------------------------------------------------- 主流程

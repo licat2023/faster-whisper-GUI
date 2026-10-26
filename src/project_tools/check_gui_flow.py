@@ -30,8 +30,8 @@ def main(identity, separation=False, ui_only=False):
     destination.mkdir(parents=True, exist_ok=True)
 
     class Window(MainWindows):
-        def readConfigJson(self, config_file_path=''):
-            UIMainWin.readConfigJson(self, '')
+        def readConfig(self, config_file_path=None):
+            return UIMainWin.readConfig(self)
         def onModelLoadClicked(self):
             if not getattr(self, '_booting', False):
                 super().onModelLoadClicked()

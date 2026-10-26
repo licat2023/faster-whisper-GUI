@@ -3,7 +3,6 @@ if not __debug__:
     raise RuntimeError('Run verification without -O; assertions are required')
 import os
 os.environ.setdefault('QT_QPA_PLATFORM', 'offscreen')
-import json
 import sys
 import threading
 import unittest
@@ -21,14 +20,16 @@ from qfluentwidgets import qconfig
 from faster_whisper_GUI import logging_setup
 logging_setup.resolveLogDir = lambda: DEST
 logging_setup.pruneOldRuns = lambda *a, **k: []
+with patch('faster_whisper_GUI.runtime.preferences.load_config', return_value={}):
+    from faster_whisper_GUI.ui import translation
 from faster_whisper_GUI.ui.window.main import MainWindows
 from faster_whisper_GUI.ui.window.view import UIMainWin
 from faster_whisper_GUI.ui.window.settings import SettingsActions
 from faster_whisper_GUI.domain.segments import segment_Transcribe
 
 class Window(MainWindows):
-    def readConfigJson(self, config_file_path=''):
-        return UIMainWin.readConfigJson(self, config_file_path if getattr(self, '_audit_ready', False) else '')
+    def readConfig(self, config_file_path=None):
+        return UIMainWin.readConfig(self, config_file_path if getattr(self, '_audit_ready', False) else None)
     def onModelLoadClicked(self):
         pass
     def closeEvent(self, event):
@@ -169,10 +170,10 @@ class Audit(unittest.TestCase):
         self.w.page_model.backend_combox.setCurrentIndex(self.w.page_model.backend_combox.findData('qwen'))
         self.w.transcribe_thread = NS(isRunning=lambda: True)
         self.w._lockRecognitionControls(True)
-        config = DEST / 'restore-sherpa.json'
-        config.write_text(json.dumps({'model_param': {'backend': 'sherpa'}}), encoding='utf-8')
+        config = DEST / 'restore-sherpa.yml'
+        config.write_text('model: {backend: sherpa}', encoding='utf-8')
         with patch('faster_whisper_GUI.ui.window.settings.QFileDialog.getOpenFileName',
-                   return_value=(str(config), 'json file(*.json)')):
+                   return_value=(str(config), 'YAML (*.yml *.yaml)')):
             self.w.page_setting.pushButton_loadConfigFile.click()
         self.w.transcribe_thread = None
         self.assertEqual(self.w.page_model.backend_combox.currentData(), 'qwen',
@@ -180,13 +181,13 @@ class Audit(unittest.TestCase):
         self.assertFalse(self.w.page_process.audio_capture_RadioButton.isEnabled())
 
     def test_invalid_config_does_not_report_success(self):
-        config = DEST / 'broken.json'
+        config = DEST / 'broken.yml'
         config.write_text('{broken', encoding='utf-8')
         with patch('faster_whisper_GUI.ui.window.settings.QFileDialog.getOpenFileName',
-                   return_value=(str(config), 'json file(*.json)')):
+                   return_value=(str(config), 'YAML (*.yml *.yaml)')):
             self.w.page_setting.pushButton_loadConfigFile.click()
         self.assertTrue(any(n[0] == 'error' for n in self.w.notices),
-            'Malformed JSON notices=' + repr(self.w.notices))
+            'Malformed YAML notices=' + repr(self.w.notices))
 
     def test_merge_notifies_view_of_removed_rows(self):
         self.install([result('merge.wav')])

@@ -1,17 +1,4 @@
-# ===================================================================
-#  faster-whisper-GUI — 依赖定义（uv 管理）
-#
-#  常用命令：
-#      uv sync --extra rocm          # 安装/更新环境（含 AMD ROCm 版 torch）
-#      uv run python -m faster_whisper_GUI    # 用本项目环境运行
-#
-#  本文件取代了旧的 requirements.txt。旧文件里的版本（faster-whisper 0.10.0、
-#  torch 1.13.1+cu117、CTranslate2>=3.21.0）早已与真实环境不符，照它装必然失败。
-#
-#  下面的依赖清单是对全部源码做 AST 扫描、取出真实 import 后得到的，
-#  NOT 照抄旧文件。旧 setup.ps1 里手写的 joblib / numba / scipy / omegaconf /
-#  einops / matplotlib 等其实都是传递依赖，源码并未直接 import。
-# ===================================================================
+# uv sync --extra rocm: 安装环境；uv run python -m faster_whisper_GUI: 启动应用。
 [project]
 name = "faster-whisper-gui"
 version = "0.8.5"
@@ -66,6 +53,7 @@ dependencies = [
     "nltk",
     "opencc-python-reimplemented",
     "webvtt-py",
+    "PyYAML>=6.0.3",
 ]
 
 [project.optional-dependencies]

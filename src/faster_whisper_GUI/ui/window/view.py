@@ -28,9 +28,6 @@ from PySide6.QtGui import QIcon
 from qfluentwidgets import (
                             NavigationInterface
                             , NavigationWidget
-                            , setTheme
-                            , setThemeColor
-                            , Theme
                             , FluentIcon
                             , NavigationItemPosition
                             
@@ -43,10 +40,14 @@ from qframelesswindow import (
 from faster_whisper_GUI.config import Language_dict, Preciese_list, Model_names, Device_list
 
 from resource import (rc_Image, rc_qss)
-import json
 
 from faster_whisper_GUI.version import __version__, __FasterWhisper_version__, __WhisperX_version__
 
+from faster_whisper_GUI.runtime.preferences import CONFIG_PATH, ConfigError, load_config, validate_values
+from faster_whisper_GUI.runtime.paths import MODEL_CACHE_DIR
+from faster_whisper_GUI.ui.appearance import apply_appearance
+from .settings import configuration_schema, CONFIGURATION_PAGES
+from qfluentwidgets import qconfig
 from faster_whisper_GUI.ui.styles import StyleSheet
 from faster_whisper_GUI.ui.translation import TRANSLATOR
 from resource import rc_Translater
@@ -70,100 +71,34 @@ log = logging.getLogger(__name__)
 class UIMainWin(FramelessMainWindow):
     """创建窗口布局和功能页面，并将配置应用到控件。"""
     
-    # def tr(self, text):
-    #     return QCoreApplication.translate(self.__class__.__name__, text)
         
-    def readConfigJson(self, config_file_path: str = ""):
-        """
-        读取配置文件；缺失或损坏时退回全默认值。
-
-        这里必须容错，原因有两个：
-         1. 该文件是程序退出时自己写的运行时状态（见 MainWindows.saveConfig），
-            不该被视为"必须随源码分发"的资源；
-         2. 旧实现直接 open()，文件不存在就抛 FileNotFoundError，而调用点没有
-            try/except —— 新克隆 / 刚清空配置的用户会**启动即崩**。
-        """
-        self.default_theme = "light"
-        self.model_param = {}
-        self.setting = {}
-        self.demucs = {}
-        self.Transcription_param = {}
-        self.output_whisperX_param = {}
-        self.vad_param = {}
-        self.use_auth_token_speaker_diarition = ""
-
-        if not config_file_path:
+    def readConfig(self, config_file_path=None):
+        """Load settings without changing the active configuration on failure."""
+        if config_file_path is None:
+            self.preferences = {}
             return True
-
-        config_path = os.path.abspath(config_file_path)
         try:
-            with open(config_path, "r", encoding="utf8") as fp:
-                json_data = json.load(fp)
-        except FileNotFoundError:
-            log.info("配置文件不存在，使用默认设置: %s", config_path)
+            preferences = load_config(config_file_path)
+            if hasattr(self, 'page_model'):
+                validate_values(preferences, configuration_schema(self))
+        except ConfigError as error:
+            log.warning('%s', error)
             return False
-        except (OSError, ValueError) as error:
-            log.warning("配置文件无法读取或 JSON 解析失败，使用默认设置: %s (%s)",
-                        config_path, error)
-            return False
-
-        if not isinstance(json_data, dict):
-            log.warning("配置文件顶层不是对象，使用默认设置: %s", config_path)
-            return False
-
-        sections = ('model_param', 'setting', 'demucs', 'Transcription_param', 'output_whisperX', 'vad_param')
-        if any(json_data.get(name) is not None and not isinstance(json_data[name], dict) for name in sections):
-            log.warning('配置节必须是 JSON 对象: %s', config_path)
-            return False
-
-        # 各配置节独立容错：某一节缺失/为 null 只影响它自己，不再整体失败。
-        # 旧实现对每一节各写一个 bare except，既丢掉了出错信息，也让"缺了哪一节"
-        # 变得不可见；这里用 get + 空值兜底，语义相同但可读、可日志。
-        self.default_theme = json_data.get("theme") or "light"
-        self.model_param = json_data.get("model_param") or {}
-        self.setting = json_data.get("setting") or {}
-        self.demucs = json_data.get("demucs") or {}
-        self.Transcription_param = json_data.get("Transcription_param") or {}
-        self.output_whisperX_param = json_data.get("output_whisperX") or {}
-        self.vad_param = json_data.get("vad_param") or {}
-
-        missing = [name for name in ("theme", "model_param", "setting", "demucs",
-                                     "Transcription_param", "output_whisperX", "vad_param")
-                   if not json_data.get(name)]
-        if missing:
-            log.info("配置文件缺少以下配置节，将使用默认值: %s", ", ".join(missing))
+        self.preferences = preferences
         return True
 
 
     def setConfig(self):
-
-        setTheme(Theme.DARK if self.default_theme == "dark" else Theme.LIGHT, save=True, lazy=True)
-        # setThemeColor("#aaff009f")
-        if self.model_param != {}:
-            self.page_model.setParam(self.model_param)
-            if not self.model_param.get("download_root", ""):
-                # 获取默认下载目录
-                userDir = os.path.expanduser("~")
-                cache_dir = os.path.join(userDir,".cache","huggingface","hub").replace("\\", "/")
-                self.download_cache_path = cache_dir
-                self.page_model.LineEdit_download_root.setText(cache_dir)
-            else:
-                self.download_cache_path = self.model_param.get("download_root", "")
-
-        if self.setting != {}:
-            self.page_setting.setParam(self.setting)
-        
-        if self.demucs != {}:
-            self.page_demucs.setParam(self.demucs)
-
-        if self.Transcription_param != {}:
-            self.page_transcribes.setParam(self.Transcription_param)
-
-        if self.output_whisperX_param != {}:
-            self.page_output.setParam(self.output_whisperX_param)
-        
-        if self.vad_param != {}:
-            self.page_VAD.setParam(self.vad_param)
+        validate_values(self.preferences, configuration_schema(self))
+        apply_appearance(self.preferences.get('ui', {}))
+        for section, attribute in CONFIGURATION_PAGES.items():
+            if section in self.preferences:
+                getattr(self, attribute).setParam(self.preferences[section])
+        self.page_setting.colorPickerButton.setColor(qconfig.get(qconfig.themeColor))
+        self.page_setting.setThemeColorAndText()
+        if not self.page_model.LineEdit_download_root.text().strip():
+            self.page_model.LineEdit_download_root.setText(str(MODEL_CACHE_DIR))
+        self.download_cache_path = self.page_model.LineEdit_download_root.text().strip()
     
     def __init__(self, parent=None, f=None) -> None:
         super().__init__()
@@ -183,14 +118,21 @@ class UIMainWin(FramelessMainWindow):
 
         self.FasterWhisperModel = None
 
-        # UI设置
+        self.preferences = {}
+        loaded = self.readConfig(CONFIG_PATH)
+        apply_appearance(self.preferences.get('ui', {}))
+
         self.setupUI()
         self.initWin()
 
-        # 读配置文件
-        self.readConfigJson(r"./fasterWhisperGUIConfig.json")
-        # 设置配置
-        self.setConfig()
+        try:
+            self.setConfig()
+        except ConfigError as error:
+            log.warning('%s', error)
+            loaded = False
+            self.preferences = {}
+        if not loaded and CONFIG_PATH.exists():
+            self.page_setting.switchButton_saveConfig.setChecked(False)
 
         try:
             self.setWidgetsStatusFromConfig()
@@ -209,13 +151,11 @@ class UIMainWin(FramelessMainWindow):
     def initWin(self):
 
         self.setObjectName("FramlessMainWin")
-        # setTheme(Theme.LIGHT)
         StyleSheet.MAIN_WINDOWS.apply(self)
         
         # self.resize(800, 500)
         self.setGeometry(100, 100, 1250, 915)
 
-        # TODO: 添加标题栏 
         self.setTitleBar(WindowTitleBar(self))
         self.titleBar.setAttribute(Qt.WA_StyledBackground)
 

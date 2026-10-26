@@ -67,7 +67,7 @@
 
 ### 敏感信息
 
-- **诊断包不含配置文件**。`fasterWhisperGUIConfig.json` 里存着 HuggingFace token，
+- **诊断包不含配置文件**。`config/config.yml` 可能含 HuggingFace token，
   打包时必须排除（`exportDiagnostics()` 里显式只收日志与环境快照）。
 - 日志里会记录模型路径、工作目录、用户名（体现在路径中）。这是排查必需的信息，
   但对外分享前应当知道这一点。

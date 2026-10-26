@@ -218,8 +218,9 @@ assert not any(name in sys.modules for name in
             os.chdir(previous)
 
     def test_configuration_persistence(self):
-        """分组后的窗口方法仍保存相同配置键和控件数据。"""
+        """窗口保存各业务节及统一的界面配置。"""
         from faster_whisper_GUI.ui.window.main import MainWindows
+        from faster_whisper_GUI.runtime.preferences import load_config
 
         def page(value):
             return SimpleNamespace(getParam=lambda: value)
@@ -233,13 +234,13 @@ assert not any(name in sys.modules for name in
             page_VAD=page({"threshold": 0.5}),
         )
         with tempfile.TemporaryDirectory() as temporary:
-            target = Path(temporary) / "config.json"
+            target = Path(temporary) / "config.yml"
             MainWindows.saveConfig(window, str(target))
-            result = json.loads(target.read_text(encoding="utf-8"))
-        self.assertEqual(result["model_param"], {"device": "cpu"})
-        self.assertEqual(result["Transcription_param"], {"language": "en"})
-        self.assertEqual(set(result), {"theme", "demucs", "model_param", "vad_param",
-                                      "setting", "Transcription_param", "output_whisperX"})
+            result = load_config(target)
+        self.assertEqual(result["model"], {"device": "cpu"})
+        self.assertEqual(result["transcription"], {"language": "en"})
+        self.assertEqual(set(result), {"ui", "separation", "model", "vad",
+                                      "settings", "transcription", "output"})
 
 
 if __name__ == "__main__":

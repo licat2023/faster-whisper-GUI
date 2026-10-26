@@ -297,12 +297,7 @@ class SettingPageNavigationInterface(ScrollArea):
             self.LineEdit_use_auth_token.setText(param["huggingface_user_token"])
             self.combox_autoGoToOutputPage.setCurrentIndex(param["autoGoToOutputPage"])
             self.switchButton_autoClearTempFiles.setChecked(param["autoClearTempFiles"])
-            self.colorPickerButton.setColor(param["themeColor"])
-            self.setThemeColorAndText()
-            # setThemeColor(param["themeColor"])
         except Exception as e:
-            # 裸 except + pass 会让「配置文件某个字段不对」变成查不出来的静默失败，
-            # 与 docs/LOGGING.md「绝不静默吞异常」相冲突。
             log.warning("读取设置页配置失败，相关控件保持默认值: %s", e, exc_info=True)
     
     def getParam(self):
@@ -313,7 +308,6 @@ class SettingPageNavigationInterface(ScrollArea):
         param["huggingface_user_token"] = self.LineEdit_use_auth_token.text().strip() or default_Huggingface_user_token 
         param["autoGoToOutputPage"] =  self.combox_autoGoToOutputPage.currentIndex()
         param["autoClearTempFiles"] = self.switchButton_autoClearTempFiles.isChecked()
-        param["themeColor"] = self.themeColor_str
         return param
 
     def setColorAndThemeColorRandom(self):
@@ -330,16 +324,16 @@ class SettingPageNavigationInterface(ScrollArea):
         
         self.themeColor_str = THEME_COLORS[index]
         self.colorPickerButton.setColor(self.themeColor_str)
-        setThemeColor(self.themeColor_str, save=True, lazy=True)
+        setThemeColor(self.themeColor_str, save=False, lazy=True)
         self.themeColorLineEdit.setText(self.themeColor_str)
 
     def setThemeColorAndText(self):
-        self.themeColor_str = self.colorPickerButton.color.name()
+        self.themeColor_str = self.colorPickerButton.color.name(QColor.NameFormat.HexArgb)
         self.themeColorLineEdit.setText(self.themeColor_str)
-        setThemeColor(self.themeColor_str, save=True, lazy=True)
+        setThemeColor(self.themeColor_str, save=False, lazy=True)
 
     def setThemeColorWithLineEditText(self,text):
         if len(text) in [7,9] and QColor.fromString(text).isValid():
             self.colorPickerButton.setColor(QColor.fromString(text))
-            setThemeColor(QColor.fromString(text), save=True, lazy=True)
+            setThemeColor(QColor.fromString(text), save=False, lazy=True)
             self.themeColor_str = text

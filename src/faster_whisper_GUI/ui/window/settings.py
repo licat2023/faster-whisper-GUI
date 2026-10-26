@@ -1,20 +1,42 @@
 """配置备份、恢复、保存和退出。"""
 
 import logging
-import json
-import os
 from PySide6.QtWidgets import QFileDialog
 from PySide6.QtCore import QTimer
 from pathlib import Path
-from qfluentwidgets import MessageBox, isDarkTheme
+from qfluentwidgets import MessageBox
 from faster_whisper_GUI import logging_setup
-from faster_whisper_GUI.runtime.diagnostics import outputWithDateTime
+from faster_whisper_GUI.runtime.preferences import CONFIG_PATH, ConfigError, save_config
+from faster_whisper_GUI.ui.appearance import appearance_settings
 
 log = logging.getLogger(__name__)
 
 WINDOW_WORKERS = ('audio_capture_thread', 'audio_stream_worker', 'transcribe_thread',
                   'whisperXWorker', 'outputWorker', 'demucsWorker', 'loadModelWorker',
                   'splitAudioFileWithSpeakerWorker')
+
+CONFIGURATION_PAGES = {'model': 'page_model', 'settings': 'page_setting',
+                       'separation': 'page_demucs', 'transcription': 'page_transcribes',
+                       'output': 'page_output', 'vad': 'page_VAD'}
+
+
+def collect_config(window):
+    data = {'ui': appearance_settings()}
+    data.update((section, getattr(window, attribute).getParam())
+                for section, attribute in CONFIGURATION_PAGES.items())
+    return data
+
+
+def configuration_schema(window):
+    schema = collect_config(window)
+    for section, attribute in CONFIGURATION_PAGES.items():
+        options = getattr(getattr(window, attribute), 'backend_options', None)
+        if options is not None:
+            fields = {identity: {field[0]: '' for field in specs}
+                      for identity, specs in options.fields.items()}
+            fields.setdefault(options.identity, {})
+            schema[section]['backend_options'] = fields
+    return schema
 
 class SettingsActions:
     """MainWindows 的内部职责分组，共用窗口状态，不创建额外 QObject。"""
@@ -23,15 +45,17 @@ class SettingsActions:
         config_file_path,_ = QFileDialog.getSaveFileName(
                                                             self,
                                                             self._tr("选择保存位置"), 
-                                                            r"./", 
-                                                            "json file(*.json)"
+                                                            str(CONFIG_PATH),
+                                                            "YAML (*.yml *.yaml)"
                                                         )
         if not config_file_path:
             return
         
-        self.saveConfig(config_file_path)
-
-        # shutil.copy(config_file_path, config_file_path+".bak")
+        try:
+            self.saveConfig(config_file_path)
+        except ConfigError as error:
+            self.raiseErrorInfoBar(self._tr('备份配置失败'), str(error))
+            return
         self.raiseInfoBar(self._tr("备份配置文件成功"), self._tr("配置文件已备份到:\n") + config_file_path)
 
     def loadBackupConfigFile(self):
@@ -45,23 +69,20 @@ class SettingsActions:
                                                             self,
                                                             self._tr("选择配置文件"),
                                                             r"./",
-                                                            "json file(*.json)"
+                                                            "YAML (*.yml *.yaml)"
                                                         )
 
         if not config_file_name:
             return
 
         try:    
-            if self.readConfigJson(config_file_path=config_file_name) is False:
+            if self.readConfig(config_file_path=config_file_name) is False:
                 raise ValueError(self._tr('配置文件不存在、格式错误或无法读取。'))
             self.setConfig()
             self.setWidgetsStatusFromConfig()
             self.raiseInfoBar(self._tr("加载配置文件成功"), self._tr("配置文件已加载:\n") + config_file_name)
 
         except Exception as e:
-            # 原先这里调用 self.raiseErrorBar(...)，但该方法在本类里从未定义
-            # （只有 raiseErrorInfoBar / raiseSuccessInfoBar / raiseInfoBar）——
-            # 于是 except 里又抛 AttributeError，把真正的失败原因盖掉。
             log.error("加载配置文件失败: %s", e, exc_info=True)
             self.raiseErrorInfoBar(self._tr("加载配置文件失败"), self._tr("配置文件加载失败:\n") + str(e))
 
@@ -91,8 +112,8 @@ class SettingsActions:
             backend.close()
         if self.page_setting.switchButton_saveConfig.isChecked():
             try:
-                self.saveConfig(config_file_name=os.path.abspath('./fasterWhisperGUIConfig.json'))
-            except (OSError, ValueError):
+                self.saveConfig()
+            except ConfigError:
                 log.error('退出时保存配置失败', exc_info=True)
         if self.page_setting.switchButton_autoClearTempFiles.isChecked():
             for subtitle in Path('./temp').glob('*.srt'):
@@ -105,33 +126,5 @@ class SettingsActions:
         self.FasterWhisperModel = None
         event.accept()
 
-    def saveConfig(self, config_file_name: str = ""):
-        
-        if config_file_name == "":
-            return
-        
-        outputWithDateTime("SaveConfigFile")
-        model_param = self.page_model.getParam()
-        setting_param = self.page_setting.getParam()    
-        demucs_param = self.page_demucs.getParam()
-        Transcription_param = self.page_transcribes.getParam()
-        output_whisperX_param = self.page_output.getParam()
-        vad_param = self.page_VAD.getParam()
-
-        config_json = {
-                        "theme":"dark" if isDarkTheme() else "light",
-                        "demucs":demucs_param,
-                        "model_param" : model_param,
-                        "vad_param": vad_param,
-                        "setting":setting_param,
-                        "Transcription_param" : Transcription_param,
-                        "output_whisperX":output_whisperX_param
-                    }
-        
-        with open(os.path.abspath(config_file_name),'w',encoding='utf8')as fp:
-            json.dump(
-                        config_json,
-                        fp,
-                        ensure_ascii=False,
-                        indent=4
-                    )
+    def saveConfig(self, config_file_name=CONFIG_PATH):
+        save_config(collect_config(self), config_file_name)

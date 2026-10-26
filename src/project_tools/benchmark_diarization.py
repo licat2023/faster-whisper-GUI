@@ -26,8 +26,9 @@ def main():
     import torch
     if args.device == "cuda" and not torch.cuda.is_available():
         raise RuntimeError("当前环境没有可用 GPU")
-    config = json.loads((ROOT / "fasterWhisperGUIConfig.json").read_text(encoding="utf-8-sig"))
-    token = config["setting"]["huggingface_user_token"]
+    from faster_whisper_GUI.runtime.preferences import load_config
+    config = load_config()
+    token = config["settings"]["huggingface_user_token"]
     started = time.perf_counter()
     pipeline = DiarizationPipeline(use_auth_token=token, cache_dir=str(ROOT / ".cache/models"), device=args.device)
     actual_device = str(pipeline.model.device)

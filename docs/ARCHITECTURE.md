@@ -1,8 +1,7 @@
 # 项目结构与维护指南
 
 本项目是 Python / PySide6 桌面应用。应用源码位于 `src/`，内部开发工具也位于 `src/`，启动和安装脚本位于根目录，
-依赖由 `pyproject.toml` 与 `uv.lock` 管理。结构重构保留现有模型、参数、
-配置格式、字幕格式和 Qt 信号。推理库版本保持不变；说话人分离默认模型升级为 community-1。
+依赖由 `pyproject.toml` 与 `uv.lock` 管理。
 
 ## 目录结构
 
@@ -30,6 +29,7 @@ src/faster_whisper_GUI/
     rocm.py                     ROCm/HIP 探测、DLL 目录和进程状态
     inference.py                幂等推理初始化顺序
     paths.py                    源码与运行时数据目录
+    preferences.py              YAML 配置的安全读取、校验与原子保存
     timecode.py                 时间码转换
     diagnostics.py              任务阶段日志
     model_process.py            持久模型子进程、JSON 通信与资源释放
@@ -106,9 +106,6 @@ from faster_whisper_GUI.subtitles.writers import writeSubtitles
 from faster_whisper_GUI.ui.window.main import MainWindows
 ```
 
-旧兼容导入文件已移除，所有模块统一使用上述规范路径。
-`config.py`、`version.py` 和 `logging_setup.py` 是有意保留的稳定模块。
-
 ## 启动与 AMD 运行时
 
 1. 启动器调用 `app.main()`，切换到项目运行目录，再通过 `runtime.rocm.setupROCm()` 注册 DLL 目录。
@@ -142,15 +139,30 @@ from faster_whisper_GUI.ui.window.main import MainWindows
 
 `pyproject.toml` 使用 setuptools 从 `src` 发现三个应用包，包含 WhisperX 的
 `assets/mel_filters.npz` 和 Qt 资源文件。uv 将本项目以可编辑方式安装。
-`src/project_tools/` 是维护脚本，`docs/` 是文档，运行时配置和日志保留在仓库根目录，项目内部缓存统一放入 `.cache/`。
+`src/project_tools/` 是维护脚本，`docs/` 是文档，运行时配置保存在 `config/config.yml`，日志保存在 `logs/`，项目内部缓存统一放入 `.cache/`。
 
 ```powershell
 uv run python -m faster_whisper_GUI
 ```
 
-`启动GUI.bat` 调用模块入口并配置统一字节码缓存。迁移到 src 时仅安装项目自身：
-`uv pip install --no-deps --editable .`，不覆盖现有自建 CTranslate2 DLL。
+`启动GUI.bat` 调用模块入口并配置统一字节码缓存。仅更新应用代码时可使用
+`uv pip install --no-deps --editable .`，避免覆盖现有自建 CTranslate2 DLL。
 一般完整环境搭建仍按 `setup.ps1` 执行，在同步依赖后重新放置 ROCm DLL。
+
+## 配置持久化
+
+`runtime/preferences.py` 是配置文件的唯一读写入口，路径由 `PROJECT_ROOT` 定位，不依赖工作目录。
+`config/config.yml` 包含 `ui`、`model`、`transcription`、`vad`、`separation`、`settings`、`output` 七个配置节。
+主题、主题色和字体只保存在 `ui`；模型名、精度和转写语言保存文本值，不保存重复的下拉框索引。
+
+QFluentWidgets 仅维护内存中的界面状态。主题、颜色和字体更新均使用 `save=False`；
+应用退出时依据自动保存开关统一保存 YAML，备份与恢复使用同一格式和读写入口。
+首次启动缺少配置时使用默认值；读取损坏配置时保留原文件，关闭自动保存，避免覆盖。
+加载备份前先检查配置结构和控件字段类型，任务运行期间禁止加载。
+
+配置使用安全 YAML 类型，拒绝重复键和 Python 对象标签；手写的 `yes`、`on` 和日期保持字符串。
+保存先完整写入同目录临时文件，再原子替换目标。配置可能含访问令牌，必须被 Git 忽略并排除于诊断包。
+PyYAML 保存会重排格式且不保留手写注释。
 
 ## 验证
 
@@ -161,6 +173,7 @@ uv run python -m faster_whisper_GUI
 .\.venv\Scripts\python.exe -m project_tools.check_fixes
 .\.venv\Scripts\python.exe -m project_tools.check_workers
 .\.venv\Scripts\python.exe -m project_tools.check_logging
+.\.venv\Scripts\python.exe -m unittest project_tools.check_preferences project_tools.check_gui_interactions project_tools.check_startup
 ```
 
 - `check_structure.py`：可编辑安装与模块入口、轻量导入、实现模块导入方向、漏导入、运行时路径、
@@ -170,20 +183,19 @@ uv run python -m faster_whisper_GUI
 - `check_logging.py`：控制台/界面/文件日志、诊断包、保留策略和共享日志状态。
 
 这些检查不下载模型，不代表 GPU 推理性能或全部真实音频场景已验证。
-完整主窗口的 offscreen 构造存在既有平台限制；组件级检查验证 Qt 信号与数据流。
+配置和界面检查使用真实 Qt 控件与隔离测试数据，验证备份恢复、主题修改和配置往返。
 修改模型加载、录音或 GPU 适配后，还应执行对应的人工功能验证。
 
-## 后端迁移
+## 识别后端
 
 文件和实时分块 Worker 通过 `RecognitionBackend.recognize(audio, options)` 调用后端，
 返回 `Recognition(segments, info, text, segment_timestamps)`。片段保持惰性迭代，以支持片段间取消；时间戳单位为秒。
 现有模型自动包装为 `FasterWhisperBackend`，也可向 Worker 注入实现该接口的后端。
-当前 options 仍沿用现有转录参数，GUI 的模型加载仍使用 faster-whisper，实时录音仍是分块识别。
-`WhisperCppBackend` 和 `QwenBackend` 已有独立适配与真实推理验证，显式拒绝不支持的参数。
-Qwen 的纯文本结果标记为没有片段时间戳，字幕 Worker 会拒绝未经对齐的结果。
+GUI 支持 faster-whisper、whisper.cpp、Qwen 和 sherpa；参数按后端映射。
+Qwen 通过 ForcedAligner 提供实测词级时间戳，再按字数、时长和停顿生成字幕。
 原生流式使用独立的 `StreamingBackend` / `StreamingSession`，通过 `StreamUpdate`
 表达可修订文本、修订号与最终状态；`SherpaStreamingBackend` 已用按实际速度回放的音频验证。
-这些实验适配尚未接入 GUI 的模型选择和录音流程，不能直接用 faster-whisper 参数表替代能力协商。
+GUI 录音使用 sherpa 原生在线会话；文件识别与录音的使用入口见 [GUI 工作流](GUI_BACKENDS.md)。
 实验结果、环境隔离与 GUI 决策见 [BACKEND_EVALUATION.md](BACKEND_EVALUATION.md)。
 
 说话人分离支持 community-1 的原生 `DiarizeOutput`，字幕默认消费排他时间轴，

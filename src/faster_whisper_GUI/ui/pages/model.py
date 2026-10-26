@@ -31,7 +31,7 @@ from faster_whisper_GUI.ui.widgets.navigation import NavigationBaseInterface
 from faster_whisper_GUI.ui.widgets.parameter import ParamWidget
 from faster_whisper_GUI.ui.styles import StyleSheet
 
-from faster_whisper_GUI.config import Preciese_list, Model_names, LEGACY_DEVICE_LIST, deviceComboItems
+from faster_whisper_GUI.config import Preciese_list, Model_names, deviceComboItems
 
 from faster_whisper_GUI.runtime.rocm import isROCmAvailable
 from faster_whisper_GUI.backends.catalog import BACKENDS
@@ -74,42 +74,12 @@ class ModelNavigationInterface(NavigationBaseInterface):
         self.SignalAndSlotConnect()
     
     def setDevice(self, device):
-        """
-        设置下拉框选中的设备
-
-        兼容两种配置格式：
-          - 新格式：实际设备名，如 "cpu" / "cuda" / "auto"（ROCm 与 CUDA 共用 "cuda"）
-          - 旧格式：下拉框索引整数，如 0 / 1 / 2（旧顺序见 config.LEGACY_DEVICE_LIST）
-
-        若配置中的设备在当前下拉框中不存在（例如配置里选了 ROCm，但本次启动未探测到 HIP SDK），
-        则回退到 "auto"，避免静默选中一个并非用户所选的设备。
-        """
-        device_combox = self.device_combox
-
-        if isinstance(device, str):
-            # 按实际设备值匹配
-            # 注意 "cuda" 可能同时对应 "cuda" 与 "AMD ROCm (HIP)" 两项，findData 返回先出现的普通 cuda
-            index = device_combox.findData(device)
-            if index >= 0:
-                device_combox.setCurrentIndex(index)
-                return
-            log.info("%s", f"[Device] 配置中的设备 {device!r} 当前不可用，回退到 auto")
-            fallback = device_combox.findData("auto")
-            device_combox.setCurrentIndex(fallback if fallback >= 0 else 1)
-            return
-
-        # 旧格式：索引。先按旧顺序映射，映射不到再按当前列表长度夹取
-        if isinstance(device, int):
-            if 0 <= device < len(LEGACY_DEVICE_LIST):
-                index = device_combox.findData(LEGACY_DEVICE_LIST[device])
-                if index >= 0:
-                    device_combox.setCurrentIndex(index)
-                    return
-            device_combox.setCurrentIndex(device if 0 <= device < device_combox.count() else 1)
-            return
-
-        log.info("%s", f"[Device] 无法识别的 device 配置: {device!r}，回退到默认")
-        device_combox.setCurrentIndex(1)
+        """Select a device by its stable identity, falling back to auto."""
+        index = self.device_combox.findData(device) if isinstance(device, str) else -1
+        if index < 0:
+            log.info('配置中的设备当前不可用，回退到 auto')
+            index = self.device_combox.findData('auto')
+        self.device_combox.setCurrentIndex(max(0, index))
 
     def selectBackend(self, *_):
         identity = self.backend_combox.currentData()
@@ -362,30 +332,22 @@ class ModelNavigationInterface(NavigationBaseInterface):
 
         
     def setParam(self, param:dict):
-        model_text = param.get("modelText")
-        precision_text = param.get("precisionText")
         param = {**self.getParam(), **param}
         index = self.backend_combox.findData(param.get('backend', 'faster-whisper'))
         self.backend_combox.setCurrentIndex(max(0, index))
         self.backend_options.restore(param.get('backend_options', {}))
         self.model_local_RadioButton.setChecked(param["localModel"])
-        self.model_online_RadioButton.setChecked(param["onlineModel"])
+        self.model_online_RadioButton.setChecked(not param["localModel"])
 
         self.setModelLocationLayout()
 
         self.lineEdit_model_path.setText(param["model_path"])
-        if model_text is not None:
-            self.combox_online_model.setText(model_text)
-        else:
-            self.combox_online_model.setCurrentIndex(param["modelName"])
+        self.combox_online_model.setText(param["modelText"])
 
         self.switchButton_use_v3.setChecked(param["use_v3_model"])
         self.setDevice(param["device"])
         self.LineEdit_device_index.setText(param["deviceIndex"])
-        if precision_text is not None:
-            self.preciese_combox.setText(precision_text)
-        else:
-            self.preciese_combox.setCurrentIndex(param["preciese"])
+        self.preciese_combox.setText(param["precisionText"])
         self.LineEdit_cpu_threads.setText(param["thread_num"])
         self.LineEdit_num_workers.setText(param["num_worker"])
         self.LineEdit_download_root.setText(param["download_root"])
@@ -396,15 +358,12 @@ class ModelNavigationInterface(NavigationBaseInterface):
         param['backend'] = self.backend_combox.currentData()
         param['backend_options'] = self.backend_options.snapshot()
         param["localModel"] = self.model_local_RadioButton.isChecked()
-        param["onlineModel"] = self.model_online_RadioButton.isChecked()
         param["model_path"] = self.lineEdit_model_path.text()
-        param["modelName"] = self.combox_online_model.currentIndex()
         param["modelText"] = self.combox_online_model.currentText()
         param["use_v3_model"] = self.switchButton_use_v3.isChecked()
         # 保存「实际设备名」而非下拉框索引：新增/隐藏设备选项时不会让旧配置错位
         param["device"] = self.device_combox.currentData()
         param["deviceIndex"] = self.LineEdit_device_index.text().strip()
-        param["preciese"] = self.preciese_combox.currentIndex()
         param["precisionText"] = self.preciese_combox.currentText()
         param["thread_num"] = self.LineEdit_cpu_threads.text().strip()
         param["num_worker"] = self.LineEdit_num_workers.text().strip()
